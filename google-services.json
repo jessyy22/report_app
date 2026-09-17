@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1007174949215",
+    "project_id": "rtoda-notification-syste-255ce",
+    "storage_bucket": "rtoda-notification-syste-255ce.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1007174949215:android:f700e4d6b3cef0d790feea",
+        "android_client_info": {
+          "package_name": "com.example.report_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDloPBQvcjprutbUva6-HizIlB2k1T1T3U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
