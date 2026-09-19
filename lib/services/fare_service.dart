@@ -8,11 +8,9 @@ class FareService {
     required String destinationBarangay,
     required bool discounted,
     required bool nightFare,
-    required bool
-    isSingleOccupant, 
+    required bool isSingleOccupant,
   }) async {
     try {
-
       final pickup = await supabase
           .from('villages')
           .select()

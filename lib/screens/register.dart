@@ -78,7 +78,6 @@ class _SignupPageState extends State<SignupPage> {
 
     setState(() => _loading = true);
 
-    final supabase = Supabase.instance.client;
     final email = _email.text.trim().toLowerCase();
     final role = _driver ? 'driver' : 'commuter';
 
@@ -92,7 +91,7 @@ class _SignupPageState extends State<SignupPage> {
           'role': role,
           'full_name': _name.text.trim(),
           'phone_number': _phone.text.trim(),
-          'body_number': _driver ? _body.text.trim() : null,
+          'body_number': _driver ? _body.text.trim().toUpperCase() : null,
           'license_number': _driver ? _license.text.trim() : null,
         },
       );
@@ -110,6 +109,9 @@ class _SignupPageState extends State<SignupPage> {
       await prefs.setString('pending_profile_image_path', _profile!.path);
       await prefs.setString('pending_id_image_path', _id!.path);
 
+      // FIXED: If session exists, complete profile immediately.
+      // Note: If email confirmation is required, session will be null here,
+      // and profile completion will be handled after confirmation/login.
       if (response.session != null) {
         await _completeProfile(user.id, role);
       }
@@ -124,7 +126,7 @@ class _SignupPageState extends State<SignupPage> {
           ),
         );
       } else if (_driver) {
-        await supabase.auth.signOut();
+        await client.auth.signOut();
         _message('Driver account created. Please wait for RTODA/LGU approval.');
 
         if (mounted) {
@@ -214,10 +216,7 @@ class _SignupPageState extends State<SignupPage> {
     }
 
     try {
-      await Supabase.instance.client.auth.resend(
-        type: OtpType.signup,
-        email: email,
-      );
+      await client.auth.resend(type: OtpType.signup, email: email);
 
       if (!mounted) return;
 
@@ -235,7 +234,6 @@ class _SignupPageState extends State<SignupPage> {
   }
 
   Future<void> _completeProfile(String uid, String role) async {
-    final supabase = Supabase.instance.client;
     final prefs = await SharedPreferences.getInstance();
 
     final profilePath = prefs.getString('pending_profile_image_path');
@@ -252,7 +250,7 @@ class _SignupPageState extends State<SignupPage> {
       final ext = path.split('.').last.toLowerCase();
       final storagePath = '$folder/$uid.$ext';
 
-      await supabase.storage
+      await client.storage
           .from(bucket)
           .upload(
             storagePath,
@@ -260,7 +258,7 @@ class _SignupPageState extends State<SignupPage> {
             fileOptions: const FileOptions(upsert: true),
           );
 
-      return supabase.storage.from(bucket).getPublicUrl(storagePath);
+      return client.storage.from(bucket).getPublicUrl(storagePath);
     }
 
     profileUrl = await upload(
@@ -285,7 +283,7 @@ class _SignupPageState extends State<SignupPage> {
         'full_name': _name.text.trim(),
         'phone_number': _phone.text.trim(),
         'license_number': _license.text.trim(),
-        'body_number': _body.text.trim(),
+        'body_number': _body.text.trim().toUpperCase(),
         'is_active': false,
         'rating': 5.0,
         'verification_status': 'pending',
@@ -293,7 +291,7 @@ class _SignupPageState extends State<SignupPage> {
         'license_photo_url': verificationUrl,
       };
 
-      await supabase.from('driver_profiles').upsert(data, onConflict: 'id');
+      await client.from('driver_profiles').upsert(data, onConflict: 'id');
     } else {
       final data = {
         'id': uid,
@@ -304,7 +302,7 @@ class _SignupPageState extends State<SignupPage> {
         if (profileUrl != null) 'profile_photo_url': profileUrl,
       };
 
-      await supabase.from('commuter_profiles').upsert(data, onConflict: 'id');
+      await client.from('commuter_profiles').upsert(data, onConflict: 'id');
     }
 
     for (final key in [

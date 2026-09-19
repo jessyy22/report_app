@@ -134,7 +134,7 @@ class _NavigationState extends State<Navigation> {
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
               icon: const Icon(Icons.sos_rounded),
-              label: const Text('SOS'),
+              label: const Text(''),
             )
           : null,
       bottomNavigationBar: NavigationBar(

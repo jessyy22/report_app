@@ -62,7 +62,6 @@ class _ReportFormState extends State<ReportForm> {
 
   final items = [
     'Overcharging',
-    'Abuse',
     'Discriminate / Refusal to convey',
     'Discourteous / Arrogant Driver',
     'Overloading',
