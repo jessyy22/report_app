@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/rtoda_widgets.dart';
 
@@ -12,13 +14,19 @@ class NotificationsScreen extends StatefulWidget {
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
   final db = Supabase.instance.client;
+  final FirebaseMessaging messaging = FirebaseMessaging.instance;
+
   Stream<List<Map<String, dynamic>>>? stream;
+  StreamSubscription<RemoteMessage>? fcmSubscription;
+
   bool markingAll = false;
 
   @override
   void initState() {
     super.initState();
+
     final user = db.auth.currentUser;
+
     if (user != null) {
       stream = db
           .from('notifications')
@@ -26,6 +34,51 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           .eq('user_id', user.id)
           .order('created_at', ascending: false);
     }
+
+    _listenToFcm();
+  }
+
+  void _listenToFcm() {
+    fcmSubscription = FirebaseMessaging.onMessage.listen((message) {
+      if (!mounted) return;
+
+      final title =
+          message.notification?.title ??
+          message.data['title']?.toString() ??
+          'RTODA Update';
+
+      final body =
+          message.notification?.body ??
+          message.data['message']?.toString() ??
+          'You have a new notification.';
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 4),
+                Text(body),
+              ],
+            ),
+            action: SnackBarAction(label: 'OK', onPressed: () {}),
+          ),
+        );
+    });
+  }
+
+  @override
+  void dispose() {
+    fcmSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -43,9 +96,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               builder: (_, s) {
                 final list = s.data ?? [];
                 final unread = list.where((n) => n['is_read'] != true).length;
+
                 if (unread == 0) return const SizedBox();
+
                 return TextButton(
-                  onPressed: markingAll ? null : () => _markAll(list),
+                  onPressed: markingAll ? null : () => _markAll(),
                   child: markingAll
                       ? const SizedBox(
                           width: 18,
@@ -127,11 +182,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             size: 28,
           ),
           const SizedBox(width: 12),
-          Text(
-            unread == 0
-                ? 'All caught up'
-                : '$unread unread notification${unread == 1 ? '' : 's'}',
-            style: const TextStyle(fontWeight: FontWeight.w800),
+          Expanded(
+            child: Text(
+              unread == 0
+                  ? 'All caught up'
+                  : '$unread unread notification'
+                        '${unread == 1 ? '' : 's'}',
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
           ),
         ],
       ),
@@ -251,19 +309,25 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _markRead(Map<String, dynamic> n) async {
-    if (n['id'] == null || n['is_read'] == true) return;
+    final user = db.auth.currentUser;
+    final id = n['id'];
+
+    if (user == null || id == null || n['is_read'] == true) {
+      return;
+    }
 
     try {
       await db
           .from('notifications')
           .update({'is_read': true})
-          .eq('id', n['id']);
+          .eq('id', id)
+          .eq('user_id', user.id);
     } catch (e) {
       debugPrint('Mark read error: $e');
     }
   }
 
-  Future<void> _markAll(List<Map<String, dynamic>> list) async {
+  Future<void> _markAll() async {
     final user = db.auth.currentUser;
     if (user == null) return;
 
@@ -277,9 +341,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           .eq('is_read', false);
     } catch (e) {
       debugPrint('Mark all error: $e');
+    } finally {
+      if (mounted) {
+        setState(() => markingAll = false);
+      }
     }
-
-    if (mounted) setState(() => markingAll = false);
   }
 
   String _time(String? value) {
@@ -295,7 +361,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (diff.inHours < 24) return '${diff.inHours}h ago';
     if (diff.inDays < 7) return '${diff.inDays}d ago';
 
-    return '${date.year}-${date.month.toString().padLeft(2, '0')}-'
+    return '${date.year}-'
+        '${date.month.toString().padLeft(2, '0')}-'
         '${date.day.toString().padLeft(2, '0')}';
   }
 
