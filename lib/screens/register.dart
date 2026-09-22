@@ -15,6 +15,7 @@ class SignupPage extends StatefulWidget {
 class _SignupPageState extends State<SignupPage> {
   final SupabaseClient client = Supabase.instance.client;
   final _formKey = GlobalKey<FormState>();
+
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _name = TextEditingController();
@@ -22,8 +23,12 @@ class _SignupPageState extends State<SignupPage> {
   final _license = TextEditingController();
   final _phone = TextEditingController();
 
-  bool _driver = true, _loading = false, _showPass = false;
-  File? _profile, _id;
+  bool _driver = true;
+  bool _loading = false;
+  bool _showPass = false;
+
+  File? _profile;
+  File? _id;
 
   @override
   void dispose() {
@@ -73,7 +78,8 @@ class _SignupPageState extends State<SignupPage> {
     if (!_formKey.currentState!.validate()) return;
 
     if (_profile == null || _id == null) {
-      return _error('Please select both required photos.');
+      _error('Please select both required photos.');
+      return;
     }
 
     setState(() => _loading = true);
@@ -97,44 +103,107 @@ class _SignupPageState extends State<SignupPage> {
       );
 
       final user = response.user;
+
       if (user == null) {
         throw const AuthException('Unable to create account.');
       }
 
       final prefs = await SharedPreferences.getInstance();
 
+      // SAVE REGISTRATION DATA
       await prefs.setString('pending_registration_uid', user.id);
-      await prefs.setString('pending_registration_role', role);
-      await prefs.setString('pending_registration_email', email);
-      await prefs.setString('pending_profile_image_path', _profile!.path);
-      await prefs.setString('pending_id_image_path', _id!.path);
 
-      // FIXED: If session exists, complete profile immediately.
-      // Note: If email confirmation is required, session will be null here,
-      // and profile completion will be handled after confirmation/login.
-      if (response.session != null) {
-        await _completeProfile(user.id, role);
+      await prefs.setString('pending_registration_role', role);
+
+      await prefs.setString('pending_registration_email', email);
+
+      await prefs.setString('pending_full_name', _name.text.trim());
+
+      await prefs.setString('pending_phone_number', _phone.text.trim());
+
+      if (_driver) {
+        await prefs.setString(
+          'pending_body_number',
+          _body.text.trim().toUpperCase(),
+        );
+
+        await prefs.setString('pending_license_number', _license.text.trim());
       }
 
-      if (!mounted) return;
+      await prefs.setString('pending_profile_image_path', _profile!.path);
 
+      await prefs.setString('pending_id_image_path', _id!.path);
+
+      // ============================================================
+      // DRIVER
+      // ============================================================
+      if (_driver) {
+        /*
+         * DRIVER DOES NOT REQUIRE EMAIL VERIFICATION.
+         *
+         * The driver must be placed in driver_profiles with:
+         * verification_status = pending
+         *
+         * Then the driver waits for admin approval.
+         */
+
+        if (response.session != null) {
+          await _completeProfile(user.id, 'driver');
+        } else {
+          /*
+           * If session is null here, Supabase is requiring email
+           * confirmation at the Auth level.
+           *
+           * This cannot be overridden per user from Flutter.
+           */
+          throw Exception(
+            'Driver registration requires email confirmation in '
+            'Supabase Auth. Disable email confirmation in Supabase '
+            'or use the driver server-side registration flow.',
+          );
+        }
+
+        if (!mounted) return;
+
+        await client.auth.signOut();
+
+        _message(
+          'Driver account created successfully. '
+          'Please wait for RTODA/LGU approval.',
+        );
+
+        await Future.delayed(const Duration(milliseconds: 800));
+
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/login');
+        }
+
+        return;
+      }
+
+      // ============================================================
+      // COMMUTER
+      // ============================================================
       if (response.session == null) {
+        if (!mounted) return;
+
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
             builder: (_) => EmailVerificationScreen(email: email),
           ),
         );
-      } else if (_driver) {
-        await client.auth.signOut();
-        _message('Driver account created. Please wait for RTODA/LGU approval.');
 
-        if (mounted) {
-          Navigator.pushReplacementNamed(context, '/login');
-        }
-      } else {
-        Navigator.pushReplacementNamed(context, '/navigation_bar');
+        return;
       }
+
+      // If email confirmation is disabled, complete commuter
+      // profile immediately.
+      await _completeProfile(user.id, 'commuter');
+
+      if (!mounted) return;
+
+      Navigator.pushReplacementNamed(context, '/navigation_bar');
     } on AuthException catch (e) {
       if (_isExisting(e.message)) {
         await _existingAccount(email);
@@ -143,7 +212,10 @@ class _SignupPageState extends State<SignupPage> {
       }
     } catch (e) {
       debugPrint('Signup error: $e');
-      _error('Registration failed. Please try again.');
+
+      if (mounted) {
+        _error(e.toString().replaceFirst('Exception: ', ''));
+      }
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -208,7 +280,9 @@ class _SignupPageState extends State<SignupPage> {
       ),
     );
 
-    if (!mounted || action == null || action == 'cancel') return;
+    if (!mounted || action == null || action == 'cancel') {
+      return;
+    }
 
     if (action == 'login') {
       Navigator.pushReplacementNamed(context, '/login');
@@ -236,18 +310,40 @@ class _SignupPageState extends State<SignupPage> {
   Future<void> _completeProfile(String uid, String role) async {
     final prefs = await SharedPreferences.getInstance();
 
+    // ------------------------------------------------------------
+    // GET SAVED REGISTRATION INFORMATION
+    // ------------------------------------------------------------
+
+    final savedName = prefs.getString('pending_full_name') ?? _name.text.trim();
+
+    final savedPhone =
+        prefs.getString('pending_phone_number') ?? _phone.text.trim();
+
+    final savedBody =
+        prefs.getString('pending_body_number') ??
+        _body.text.trim().toUpperCase();
+
+    final savedLicense =
+        prefs.getString('pending_license_number') ?? _license.text.trim();
+
     final profilePath = prefs.getString('pending_profile_image_path');
+
     final idPath = prefs.getString('pending_id_image_path');
 
     String? profileUrl;
     String? verificationUrl;
 
+    // ------------------------------------------------------------
+    // IMAGE UPLOAD
+    // ------------------------------------------------------------
+
     Future<String?> upload(String? path, String bucket, String folder) async {
-      if (path == null || !File(path).existsSync()) {
+      if (path == null || path.isEmpty || !File(path).existsSync()) {
         return null;
       }
 
       final ext = path.split('.').last.toLowerCase();
+
       final storagePath = '$folder/$uid.$ext';
 
       await client.storage
@@ -274,16 +370,24 @@ class _SignupPageState extends State<SignupPage> {
     );
 
     if (verificationUrl == null) {
-      throw Exception('Required ID/license photo is missing.');
+      throw Exception(
+        role == 'driver'
+            ? 'Required license photo is missing.'
+            : 'Required ID photo is missing.',
+      );
     }
+
+    // ------------------------------------------------------------
+    // DRIVER PROFILE
+    // ------------------------------------------------------------
 
     if (role == 'driver') {
       final data = {
         'id': uid,
-        'full_name': _name.text.trim(),
-        'phone_number': _phone.text.trim(),
-        'license_number': _license.text.trim(),
-        'body_number': _body.text.trim().toUpperCase(),
+        'full_name': savedName,
+        'phone_number': savedPhone,
+        'license_number': savedLicense,
+        'body_number': savedBody,
         'is_active': false,
         'rating': 5.0,
         'verification_status': 'pending',
@@ -291,12 +395,20 @@ class _SignupPageState extends State<SignupPage> {
         'license_photo_url': verificationUrl,
       };
 
+      debugPrint('Creating driver profile: $data');
+
       await client.from('driver_profiles').upsert(data, onConflict: 'id');
-    } else {
+
+      debugPrint('Driver profile created successfully.');
+    }
+    // ------------------------------------------------------------
+    // COMMUTER PROFILE
+    // ------------------------------------------------------------
+    else {
       final data = {
         'id': uid,
-        'full_name': _name.text.trim(),
-        'phone_number': _phone.text.trim(),
+        'full_name': savedName,
+        'phone_number': savedPhone,
         'id_photo_url': verificationUrl,
         'is_verified': false,
         if (profileUrl != null) 'profile_photo_url': profileUrl,
@@ -305,10 +417,18 @@ class _SignupPageState extends State<SignupPage> {
       await client.from('commuter_profiles').upsert(data, onConflict: 'id');
     }
 
+    // ------------------------------------------------------------
+    // CLEAN PENDING DATA
+    // ------------------------------------------------------------
+
     for (final key in [
       'pending_registration_uid',
       'pending_registration_role',
       'pending_registration_email',
+      'pending_full_name',
+      'pending_phone_number',
+      'pending_body_number',
+      'pending_license_number',
       'pending_profile_image_path',
       'pending_id_image_path',
     ]) {
@@ -370,7 +490,9 @@ class _SignupPageState extends State<SignupPage> {
                   ),
                 ],
               ),
+
               const SizedBox(height: 20),
+
               Text(
                 _driver
                     ? 'Driver accounts require RTODA/LGU verification.'
@@ -378,7 +500,9 @@ class _SignupPageState extends State<SignupPage> {
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: Colors.black54),
               ),
+
               const SizedBox(height: 20),
+
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -386,31 +510,45 @@ class _SignupPageState extends State<SignupPage> {
                   _image(_driver ? 'License' : 'ID', _id, () => _pick(false)),
                 ],
               ),
+
               const SizedBox(height: 24),
+
               _field(_name, 'Full Name', Icons.person_outline),
+
               const SizedBox(height: 16),
+
               _field(
                 _phone,
                 'Phone Number',
                 Icons.phone_outlined,
                 number: true,
               ),
+
               if (_driver) ...[
                 const SizedBox(height: 16),
+
                 _field(_body, 'Body Number (VGN-XXX)', Icons.directions_bus),
+
                 const SizedBox(height: 16),
+
                 _field(_license, 'License Number', Icons.badge_outlined),
               ],
+
               const SizedBox(height: 16),
+
               _field(
                 _email,
                 'Email',
                 Icons.email_outlined,
                 keyboard: TextInputType.emailAddress,
               ),
+
               const SizedBox(height: 16),
+
               _field(_password, 'Password', Icons.lock_outline, obscure: true),
+
               const SizedBox(height: 28),
+
               SizedBox(
                 width: double.infinity,
                 height: 52,
