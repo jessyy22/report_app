@@ -547,6 +547,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
       await _supabase.from('sos_alerts').insert({
         'user_id': user.id,
         'user_role': 'driver',
+        'body_number': _bodyNumber,
         'status': 'active',
         'created_at': DateTime.now().toUtc().toIso8601String(),
       });

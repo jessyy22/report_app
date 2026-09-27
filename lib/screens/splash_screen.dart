@@ -106,6 +106,8 @@ class _SplashScreenState extends State<SplashScreen> {
           return;
         }
 
+        final isActive = driverData['is_active'] == true;
+
         if (status != 'approved') {
           await client.auth.signOut();
 
@@ -115,6 +117,21 @@ class _SplashScreenState extends State<SplashScreen> {
             context,
             MaterialPageRoute(
               builder: (_) => AccountStatusScreen(status: status),
+            ),
+          );
+
+          return;
+        }
+
+        if (!isActive) {
+          await client.auth.signOut();
+
+          if (!mounted) return;
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const AccountStatusScreen(status: 'inactive'),
             ),
           );
 

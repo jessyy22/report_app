@@ -180,15 +180,15 @@ class _LoginPageState extends State<LoginPage> {
     debugPrint('DRIVER STATUS: $status');
     debugPrint('DRIVER ACTIVE: $active');
 
-    if (!active) {
-      await _signOut();
-      await _showAccountStatus('inactive');
-      return;
-    }
-
     if (status != 'approved') {
       await _signOut();
       await _showAccountStatus(status);
+      return;
+    }
+
+    if (!active) {
+      await _signOut();
+      await _showAccountStatus('inactive');
       return;
     }
 
