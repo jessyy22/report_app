@@ -486,23 +486,34 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _forgotPassword() async {
-    final email = _email.text.trim();
+    final email = _email.text.trim().toLowerCase();
 
-    if (!email.contains('@')) {
-      _error('Enter your email first.');
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+      _error('Enter a valid email first.');
       return;
     }
 
     setState(() => _resetting = true);
 
     try {
-      await client.auth.resetPasswordForEmail(email);
+      await client.auth.resetPasswordForEmail(
+        email,
+        redirectTo: 'rtoda://reset-password',
+      );
 
       if (!mounted) return;
 
-      _message('Password reset email sent.');
+      _message(
+        'Password reset email sent. Check your email and tap the reset link.',
+      );
     } on AuthException catch (e) {
-      if (mounted) _error(e.message);
+      if (mounted) {
+        _error(e.message);
+      }
+    } catch (e) {
+      if (mounted) {
+        _error('Unable to send password reset email.');
+      }
     } finally {
       if (mounted) {
         setState(() => _resetting = false);

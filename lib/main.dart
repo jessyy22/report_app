@@ -11,6 +11,7 @@ import 'screens/drivers/driver_dashboard.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login.dart';
 import 'theme/app_theme.dart';
+import 'screens/reset_password_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,11 +37,32 @@ class RTODAPassengerApp extends StatefulWidget {
 class _RTODAPassengerAppState extends State<RTODAPassengerApp> {
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSubscription;
+  StreamSubscription<AuthState>? _authSubscription;
 
   @override
   void initState() {
     super.initState();
+    _initAuthListener();
     _initDeepLinks();
+  }
+
+  void _initAuthListener() {
+    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen(
+      (data) {
+        if (data.event == AuthChangeEvent.passwordRecovery) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+
+            Navigator.of(
+              context,
+            ).pushNamedAndRemoveUntil('/reset-password', (route) => false);
+          });
+        }
+      },
+      onError: (error) {
+        debugPrint('Auth state error: $error');
+      },
+    );
   }
 
   Future<void> _initDeepLinks() async {
@@ -65,20 +87,29 @@ class _RTODAPassengerAppState extends State<RTODAPassengerApp> {
   void _handleDeepLink(Uri uri) {
     debugPrint('RTODA DEEP LINK: $uri');
 
-    if (uri.scheme == 'rtoda' && uri.host == 'login-callback') {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
 
+      if (uri.scheme == 'rtoda' && uri.host == 'login-callback') {
         Navigator.of(
           context,
         ).pushNamedAndRemoveUntil('/login', (route) => false);
-      });
-    }
+        return;
+      }
+
+      if (uri.scheme == 'rtoda' && uri.host == 'reset-password') {
+        Navigator.of(
+          context,
+        ).pushNamedAndRemoveUntil('/reset-password', (route) => false);
+        return;
+      }
+    });
   }
 
   @override
   void dispose() {
     _linkSubscription?.cancel();
+    _authSubscription?.cancel();
     super.dispose();
   }
 
@@ -92,6 +123,7 @@ class _RTODAPassengerAppState extends State<RTODAPassengerApp> {
       routes: {
         '/': (context) => const SplashScreen(),
         '/login': (context) => const LoginPage(),
+        '/reset-password': (context) => const ResetPasswordScreen(),
         '/driver_dashboard': (context) => const DriverDashboard(),
         '/navigation_bar': (context) => const NavigationBarApp(),
       },
