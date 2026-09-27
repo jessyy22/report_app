@@ -353,7 +353,7 @@ class _SignupPageState extends State<SignupPage> {
         _body.text.trim().toUpperCase();
     final savedLicense =
         prefs.getString('pending_license_number') ?? _license.text.trim();
-    final profilePath = prefs.getString('pending_profile_image_path')
+    final profilePath = prefs.getString('pending_profile_image_path');
     final idPath = prefs.getString('pending_id_image_path');
 
     String? profileUrl;
@@ -418,9 +418,7 @@ class _SignupPageState extends State<SignupPage> {
       await client.from('driver_profiles').upsert(data, onConflict: 'id');
 
       debugPrint('Driver profile created successfully.');
-    }
-
-    else {
+    } else {
       final data = {
         'id': uid,
         'full_name': savedName,
