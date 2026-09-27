@@ -92,9 +92,6 @@ class _SignupPageState extends State<SignupPage> {
     final licenseNumber = _driver ? _license.text.trim() : null;
 
     try {
-      // ============================================================
-      // DRIVER REGISTRATION
-      // ============================================================
       if (_driver) {
         final functionResponse = await client.functions.invoke(
           'hyper-responder',
@@ -134,39 +131,17 @@ class _SignupPageState extends State<SignupPage> {
           );
         }
 
-        // ------------------------------------------------------------
-        // SAVE REGISTRATION DATA
-        // ------------------------------------------------------------
-
         final prefs = await SharedPreferences.getInstance();
 
         await prefs.setString('pending_registration_uid', userId);
-
         await prefs.setString('pending_registration_role', 'driver');
-
         await prefs.setString('pending_registration_email', email);
-
         await prefs.setString('pending_full_name', fullName);
-
         await prefs.setString('pending_phone_number', phoneNumber);
-
         await prefs.setString('pending_body_number', bodyNumber ?? '');
-
         await prefs.setString('pending_license_number', licenseNumber ?? '');
-
         await prefs.setString('pending_profile_image_path', _profile!.path);
-
         await prefs.setString('pending_id_image_path', _id!.path);
-
-        // ------------------------------------------------------------
-        // TEMPORARY DRIVER LOGIN
-        //
-        // The Edge Function already confirmed the email,
-        // so this should create a normal authenticated session.
-        //
-        // The session is needed by _completeProfile() for
-        // uploading the driver's images.
-        // ------------------------------------------------------------
 
         final loginResponse = await client.auth.signInWithPassword(
           email: email,
@@ -179,37 +154,22 @@ class _SignupPageState extends State<SignupPage> {
           );
         }
 
-        // ------------------------------------------------------------
-        // UPLOAD DRIVER PHOTOS + COMPLETE PROFILE
-        // ------------------------------------------------------------
-
         await _completeProfile(userId, 'driver');
-
-        // ------------------------------------------------------------
-        // SIGN DRIVER OUT
-        // ------------------------------------------------------------
-
         await client.auth.signOut();
 
         if (!mounted) return;
-
         _message(
           'Driver account created successfully. '
           'Please wait for RTODA/LGU approval.',
         );
 
         await Future.delayed(const Duration(milliseconds: 800));
-
         if (mounted) {
           Navigator.pushReplacementNamed(context, '/login');
         }
 
         return;
       }
-
-      // ============================================================
-      // COMMUTER REGISTRATION
-      // ============================================================
 
       final response = await client.auth.signUp(
         email: email,
@@ -231,27 +191,13 @@ class _SignupPageState extends State<SignupPage> {
 
       final prefs = await SharedPreferences.getInstance();
 
-      // ------------------------------------------------------------
-      // SAVE COMMUTER REGISTRATION DATA
-      // ------------------------------------------------------------
-
       await prefs.setString('pending_registration_uid', user.id);
-
       await prefs.setString('pending_registration_role', 'commuter');
-
       await prefs.setString('pending_registration_email', email);
-
       await prefs.setString('pending_full_name', fullName);
-
       await prefs.setString('pending_phone_number', phoneNumber);
-
       await prefs.setString('pending_profile_image_path', _profile!.path);
-
       await prefs.setString('pending_id_image_path', _id!.path);
-
-      // ------------------------------------------------------------
-      // COMMUTER EMAIL VERIFICATION
-      // ------------------------------------------------------------
 
       if (response.session == null) {
         if (!mounted) return;
@@ -266,8 +212,6 @@ class _SignupPageState extends State<SignupPage> {
         return;
       }
 
-      // If email confirmation is disabled,
-      // complete the commuter profile immediately.
       await _completeProfile(user.id, 'commuter');
 
       if (!mounted) return;
@@ -401,32 +345,19 @@ class _SignupPageState extends State<SignupPage> {
   Future<void> _completeProfile(String uid, String role) async {
     final prefs = await SharedPreferences.getInstance();
 
-    // ------------------------------------------------------------
-    // GET SAVED REGISTRATION INFORMATION
-    // ------------------------------------------------------------
-
     final savedName = prefs.getString('pending_full_name') ?? _name.text.trim();
-
     final savedPhone =
         prefs.getString('pending_phone_number') ?? _phone.text.trim();
-
     final savedBody =
         prefs.getString('pending_body_number') ??
         _body.text.trim().toUpperCase();
-
     final savedLicense =
         prefs.getString('pending_license_number') ?? _license.text.trim();
-
-    final profilePath = prefs.getString('pending_profile_image_path');
-
+    final profilePath = prefs.getString('pending_profile_image_path')
     final idPath = prefs.getString('pending_id_image_path');
 
     String? profileUrl;
     String? verificationUrl;
-
-    // ------------------------------------------------------------
-    // IMAGE UPLOAD
-    // ------------------------------------------------------------
 
     Future<String?> upload(String? path, String bucket, String folder) async {
       if (path == null || path.isEmpty || !File(path).existsSync()) {
@@ -468,10 +399,6 @@ class _SignupPageState extends State<SignupPage> {
       );
     }
 
-    // ------------------------------------------------------------
-    // DRIVER PROFILE
-    // ------------------------------------------------------------
-
     if (role == 'driver') {
       final data = {
         'id': uid,
@@ -492,9 +419,7 @@ class _SignupPageState extends State<SignupPage> {
 
       debugPrint('Driver profile created successfully.');
     }
-    // ------------------------------------------------------------
-    // COMMUTER PROFILE
-    // ------------------------------------------------------------
+
     else {
       final data = {
         'id': uid,
@@ -507,10 +432,6 @@ class _SignupPageState extends State<SignupPage> {
 
       await client.from('commuter_profiles').upsert(data, onConflict: 'id');
     }
-
-    // ------------------------------------------------------------
-    // CLEAN PENDING DATA
-    // ------------------------------------------------------------
 
     for (final key in [
       'pending_registration_uid',
@@ -603,11 +524,9 @@ class _SignupPageState extends State<SignupPage> {
               ),
 
               const SizedBox(height: 24),
-
               _field(_name, 'Full Name', Icons.person_outline),
 
               const SizedBox(height: 16),
-
               _field(
                 _phone,
                 'Phone Number',
@@ -617,16 +536,12 @@ class _SignupPageState extends State<SignupPage> {
 
               if (_driver) ...[
                 const SizedBox(height: 16),
-
                 _field(_body, 'Body Number (VGN-XXX)', Icons.directions_bus),
-
                 const SizedBox(height: 16),
-
                 _field(_license, 'License Number', Icons.badge_outlined),
               ],
 
               const SizedBox(height: 16),
-
               _field(
                 _email,
                 'Email',
@@ -635,11 +550,9 @@ class _SignupPageState extends State<SignupPage> {
               ),
 
               const SizedBox(height: 16),
-
               _field(_password, 'Password', Icons.lock_outline, obscure: true),
 
               const SizedBox(height: 28),
-
               SizedBox(
                 width: double.infinity,
                 height: 52,
