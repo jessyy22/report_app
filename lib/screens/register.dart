@@ -85,87 +85,113 @@ class _SignupPageState extends State<SignupPage> {
     setState(() => _loading = true);
 
     final email = _email.text.trim().toLowerCase();
-    final role = _driver ? 'driver' : 'commuter';
+    final password = _password.text.trim();
+    final fullName = _name.text.trim();
+    final phoneNumber = _phone.text.trim();
+    final bodyNumber = _driver ? _body.text.trim().toUpperCase() : null;
+    final licenseNumber = _driver ? _license.text.trim() : null;
 
     try {
-      final response = await client.auth.signUp(
-        email: email,
-        password: _password.text,
-        emailRedirectTo: 'rtoda://login-callback',
-        data: {
-          'rtoda_auth_v2': true,
-          'role': role,
-          'full_name': _name.text.trim(),
-          'phone_number': _phone.text.trim(),
-          'body_number': _driver ? _body.text.trim().toUpperCase() : null,
-          'license_number': _driver ? _license.text.trim() : null,
-        },
-      );
-
-      final user = response.user;
-
-      if (user == null) {
-        throw const AuthException('Unable to create account.');
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-
-      // SAVE REGISTRATION DATA
-      await prefs.setString('pending_registration_uid', user.id);
-
-      await prefs.setString('pending_registration_role', role);
-
-      await prefs.setString('pending_registration_email', email);
-
-      await prefs.setString('pending_full_name', _name.text.trim());
-
-      await prefs.setString('pending_phone_number', _phone.text.trim());
-
+      // ============================================================
+      // DRIVER REGISTRATION
+      // ============================================================
       if (_driver) {
-        await prefs.setString(
-          'pending_body_number',
-          _body.text.trim().toUpperCase(),
+        final functionResponse = await client.functions.invoke(
+          'hyper-responder',
+          body: {
+            'email': email,
+            'password': password,
+            'full_name': fullName,
+            'phone_number': phoneNumber,
+            'body_number': bodyNumber,
+            'license_number': licenseNumber,
+          },
         );
 
-        await prefs.setString('pending_license_number', _license.text.trim());
-      }
+        debugPrint('driver-signup response: ${functionResponse.data}');
 
-      await prefs.setString('pending_profile_image_path', _profile!.path);
+        final responseData = functionResponse.data;
 
-      await prefs.setString('pending_id_image_path', _id!.path);
-
-      // ============================================================
-      // DRIVER
-      // ============================================================
-      if (_driver) {
-        /*
-         * DRIVER DOES NOT REQUIRE EMAIL VERIFICATION.
-         *
-         * The driver must be placed in driver_profiles with:
-         * verification_status = pending
-         *
-         * Then the driver waits for admin approval.
-         */
-
-        if (response.session != null) {
-          await _completeProfile(user.id, 'driver');
-        } else {
-          /*
-           * If session is null here, Supabase is requiring email
-           * confirmation at the Auth level.
-           *
-           * This cannot be overridden per user from Flutter.
-           */
+        if (responseData == null || responseData is! Map) {
           throw Exception(
-            'Driver registration requires email confirmation in '
-            'Supabase Auth. Disable email confirmation in Supabase '
-            'or use the driver server-side registration flow.',
+            'No valid response was received from the driver signup service.',
           );
         }
 
-        if (!mounted) return;
+        final data = Map<String, dynamic>.from(responseData);
+
+        if (data['success'] != true) {
+          throw Exception(
+            data['error']?.toString() ?? 'Unable to create driver account.',
+          );
+        }
+
+        final userId = data['user_id']?.toString();
+
+        if (userId == null || userId.isEmpty) {
+          throw Exception(
+            'Driver account was created, but no user ID was returned.',
+          );
+        }
+
+        // ------------------------------------------------------------
+        // SAVE REGISTRATION DATA
+        // ------------------------------------------------------------
+
+        final prefs = await SharedPreferences.getInstance();
+
+        await prefs.setString('pending_registration_uid', userId);
+
+        await prefs.setString('pending_registration_role', 'driver');
+
+        await prefs.setString('pending_registration_email', email);
+
+        await prefs.setString('pending_full_name', fullName);
+
+        await prefs.setString('pending_phone_number', phoneNumber);
+
+        await prefs.setString('pending_body_number', bodyNumber ?? '');
+
+        await prefs.setString('pending_license_number', licenseNumber ?? '');
+
+        await prefs.setString('pending_profile_image_path', _profile!.path);
+
+        await prefs.setString('pending_id_image_path', _id!.path);
+
+        // ------------------------------------------------------------
+        // TEMPORARY DRIVER LOGIN
+        //
+        // The Edge Function already confirmed the email,
+        // so this should create a normal authenticated session.
+        //
+        // The session is needed by _completeProfile() for
+        // uploading the driver's images.
+        // ------------------------------------------------------------
+
+        final loginResponse = await client.auth.signInWithPassword(
+          email: email,
+          password: password,
+        );
+
+        if (loginResponse.user == null) {
+          throw Exception(
+            'Driver account was created, but automatic login failed.',
+          );
+        }
+
+        // ------------------------------------------------------------
+        // UPLOAD DRIVER PHOTOS + COMPLETE PROFILE
+        // ------------------------------------------------------------
+
+        await _completeProfile(userId, 'driver');
+
+        // ------------------------------------------------------------
+        // SIGN DRIVER OUT
+        // ------------------------------------------------------------
 
         await client.auth.signOut();
+
+        if (!mounted) return;
 
         _message(
           'Driver account created successfully. '
@@ -182,8 +208,51 @@ class _SignupPageState extends State<SignupPage> {
       }
 
       // ============================================================
-      // COMMUTER
+      // COMMUTER REGISTRATION
       // ============================================================
+
+      final response = await client.auth.signUp(
+        email: email,
+        password: password,
+        emailRedirectTo: 'rtoda://login-callback',
+        data: {
+          'rtoda_auth_v2': true,
+          'role': 'commuter',
+          'full_name': fullName,
+          'phone_number': phoneNumber,
+        },
+      );
+
+      final user = response.user;
+
+      if (user == null) {
+        throw const AuthException('Unable to create account.');
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+
+      // ------------------------------------------------------------
+      // SAVE COMMUTER REGISTRATION DATA
+      // ------------------------------------------------------------
+
+      await prefs.setString('pending_registration_uid', user.id);
+
+      await prefs.setString('pending_registration_role', 'commuter');
+
+      await prefs.setString('pending_registration_email', email);
+
+      await prefs.setString('pending_full_name', fullName);
+
+      await prefs.setString('pending_phone_number', phoneNumber);
+
+      await prefs.setString('pending_profile_image_path', _profile!.path);
+
+      await prefs.setString('pending_id_image_path', _id!.path);
+
+      // ------------------------------------------------------------
+      // COMMUTER EMAIL VERIFICATION
+      // ------------------------------------------------------------
+
       if (response.session == null) {
         if (!mounted) return;
 
@@ -197,8 +266,8 @@ class _SignupPageState extends State<SignupPage> {
         return;
       }
 
-      // If email confirmation is disabled, complete commuter
-      // profile immediately.
+      // If email confirmation is disabled,
+      // complete the commuter profile immediately.
       await _completeProfile(user.id, 'commuter');
 
       if (!mounted) return;
@@ -209,6 +278,28 @@ class _SignupPageState extends State<SignupPage> {
         await _existingAccount(email);
       } else {
         _error(_authMessage(e.message));
+      }
+    } on FunctionException catch (e) {
+      debugPrint(
+        'driver-signup FunctionException: '
+        '${e.status} ${e.details}',
+      );
+
+      String message = 'Unable to create driver account.';
+
+      if (e.details is Map) {
+        final details = Map<String, dynamic>.from(e.details as Map);
+
+        message =
+            details['error']?.toString() ??
+            details['message']?.toString() ??
+            message;
+      } else if (e.details != null) {
+        message = e.details.toString();
+      }
+
+      if (mounted) {
+        _error(message);
       }
     } catch (e) {
       debugPrint('Signup error: $e');
