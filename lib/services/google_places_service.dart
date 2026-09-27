@@ -3,8 +3,7 @@ import 'package:http/http.dart' as http;
 import '../models/place.dart';
 
 class GooglePlacesService {
-  // Replace with your actual API Key
-  static const String apiKey = "";
+  static const String apiKey = "AIzaSyAovUxi_7Ak591LhTmShKqcnEOf2PRy1uI";
 
   Future<List<Place>> searchPlaces(String query) async {
     if (query.trim().isEmpty) return [];

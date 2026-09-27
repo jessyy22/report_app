@@ -501,7 +501,7 @@ class _SignupPageState extends State<SignupPage> {
         'full_name': savedName,
         'phone_number': savedPhone,
         'id_photo_url': verificationUrl,
-        'is_verified': false,
+        'is_verified': client.auth.currentUser?.emailConfirmedAt != null,
         if (profileUrl != null) 'profile_photo_url': profileUrl,
       };
 

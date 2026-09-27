@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class GoogleGeocodingService {
-  static const String apiKey = "";
+  static const String apiKey = "AIzaSyAeEzeHJPfDS33XJiZk6vDl2olcua1seqs";
 
   Future<String?> getFullAddress({
     required double latitude,

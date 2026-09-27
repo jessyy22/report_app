@@ -21,7 +21,8 @@ Future<void> main() async {
 
   await Supabase.initialize(
     url: 'https://haryaqpwigdqthiulgwu.supabase.co',
-    anonKey: '',
+    anonKey:
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhhcnlhcXB3aWdkcXRoaXVsZ3d1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NzY2NDAsImV4cCI6MjA5MTQ1MjY0MH0.iW3Tujg1Q81Fsepj6LgBef7f1s0cMhJcSoEmjpWSKRk',
   );
 
   runApp(const RTODAPassengerApp());

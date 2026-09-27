@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/fcm_service.dart';
+import 'reset_password_screen.dart';
 import 'account_status_screen.dart';
 import 'register.dart';
 
@@ -51,6 +52,7 @@ class _LoginPageState extends State<LoginPage> {
       }
 
       debugPrint('LOGIN USER: ${user.id}');
+      debugPrint('EMAIL CONFIRMED: ${user.emailConfirmedAt}');
 
       final role = await _getRole(user.id);
 
@@ -275,6 +277,8 @@ class _LoginPageState extends State<LoginPage> {
             .eq('id', uid)
             .maybeSingle();
 
+        final emailVerified = client.auth.currentUser?.emailConfirmedAt != null;
+
         if (existing == null) {
           String? profileUrl;
           String? verificationUrl;
@@ -303,7 +307,7 @@ class _LoginPageState extends State<LoginPage> {
             'id': uid,
             'full_name': _meta(metadata, 'full_name'),
             'phone_number': _meta(metadata, 'phone_number'),
-            'is_verified': false,
+            'is_verified': emailVerified,
           };
 
           if (verificationUrl != null) {
@@ -315,6 +319,11 @@ class _LoginPageState extends State<LoginPage> {
           }
 
           await client.from('commuter_profiles').insert(data);
+        } else {
+          await client
+              .from('commuter_profiles')
+              .update({'is_verified': emailVerified})
+              .eq('id', uid);
         }
 
         if (pendingUid == uid) {
@@ -431,7 +440,7 @@ class _LoginPageState extends State<LoginPage> {
       'full_name': _meta(metadata, 'full_name'),
       'phone_number': _meta(metadata, 'phone_number'),
       'id_photo_url': idUrl,
-      'is_verified': false,
+      'is_verified': client.auth.currentUser?.emailConfirmedAt != null,
     };
 
     if (profileUrl != null) {
