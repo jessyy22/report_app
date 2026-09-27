@@ -11,6 +11,7 @@ import 'screens/drivers/driver_dashboard.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login.dart';
 import 'theme/app_theme.dart';
+import 'screens/common/terms_privacy_screen.dart';
 import 'screens/reset_password_screen.dart';
 
 Future<void> main() async {
@@ -122,6 +123,7 @@ class _RTODAPassengerAppState extends State<RTODAPassengerApp> {
       initialRoute: '/',
       routes: {
         '/': (context) => const SplashScreen(),
+        '/terms': (context) => const TermsPrivacyScreen(),
         '/login': (context) => const LoginPage(),
         '/reset-password': (context) => const ResetPasswordScreen(),
         '/driver_dashboard': (context) => const DriverDashboard(),
