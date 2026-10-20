@@ -4,10 +4,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/rtoda_widgets.dart';
 import '../common/notifications_screen.dart';
+import '../common/sos_screen.dart';
 import 'driver_report_page.dart';
 import 'profile_screen.dart';
 import 'viganFareMatrix.dart';
-import '../../services/notification_service.dart';
 
 class DriverDashboard extends StatefulWidget {
   const DriverDashboard({super.key});
@@ -42,12 +42,10 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
     if (user == null) {
       if (!mounted) return;
-
       setState(() {
         _isLoading = false;
         _errorMessage = 'Please log in to open the driver dashboard.';
       });
-
       return;
     }
 
@@ -59,8 +57,6 @@ class _DriverDashboardState extends State<DriverDashboard> {
     }
 
     try {
-      debugPrint('AUTH USER ID: ${user.id}');
-
       final data = await _supabase
           .from('driver_profiles')
           .select(
@@ -70,22 +66,18 @@ class _DriverDashboardState extends State<DriverDashboard> {
           .eq('id', user.id)
           .maybeSingle();
 
-      debugPrint('DRIVER PROFILE DATA: $data');
-
       if (data == null) {
         if (!mounted) return;
-
         setState(() {
           _isLoading = false;
           _errorMessage =
-              'No driver profile was found for this account.\n\nUID: ${user.id}';
+              'No driver profile was found for this account.\n\n'
+              'UID: ${user.id}';
         });
-
         return;
       }
 
       final body = (data['body_number'] ?? '').toString().trim();
-
       int openReports = 0;
 
       if (body.isNotEmpty) {
@@ -99,7 +91,6 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
           openReports = reports.where((report) {
             final status = (report['status'] ?? '').toString().toLowerCase();
-
             return status != 'resolved' && status != 'dismissed';
           }).length;
         } catch (e) {
@@ -108,9 +99,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
       }
 
       final profileName = data['full_name']?.toString().trim();
-
       final authName = user.userMetadata?['full_name']?.toString().trim();
-
       final photo = data['profile_photo_url']?.toString().trim();
 
       if (!mounted) return;
@@ -121,30 +110,29 @@ class _DriverDashboardState extends State<DriverDashboard> {
             : authName?.isNotEmpty == true
             ? authName!
             : 'Driver';
-
         _bodyNumber = body.isEmpty ? 'N/A' : body;
-
         _rating = (data['rating'] ?? '5.0').toString();
-
         _status = data['is_active'] == true ? 'Active' : 'Inactive';
-
         _activeReports = openReports;
-
         _photoUrl = photo?.isNotEmpty == true ? photo : null;
-
         _isLoading = false;
       });
     } catch (error, stackTrace) {
       debugPrint('DRIVER PROFILE ERROR: $error');
       debugPrint('STACK TRACE: $stackTrace');
-
       if (!mounted) return;
-
       setState(() {
         _isLoading = false;
         _errorMessage = 'Unable to load driver information.\n\n$error';
       });
     }
+  }
+
+  String _greeting() {
+    final h = DateTime.now().hour;
+    if (h < 12) return 'Good morning';
+    if (h < 18) return 'Good afternoon';
+    return 'Good evening';
   }
 
   @override
@@ -182,15 +170,22 @@ class _DriverDashboardState extends State<DriverDashboard> {
         onRefresh: _fetchDriverProfile,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24),
           children: [
-            const SizedBox(height: 110),
-            const Icon(Icons.person_off_outlined, size: 64, color: Colors.grey),
+            const Icon(
+              Icons.person_off_outlined,
+              size: 64,
+              color: AppColors.muted,
+            ),
             const SizedBox(height: 16),
             Text(
               _errorMessage!,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: AppColors.text,
+              ),
             ),
             const SizedBox(height: 14),
             Center(
@@ -265,11 +260,12 @@ class _DriverDashboardState extends State<DriverDashboard> {
                   const SizedBox(width: 12),
                   const Expanded(
                     child: Text(
-                      'Review your reports regularly and submit an explanation when the LGU requests a response.',
+                      'Review your reports regularly and submit an '
+                      'explanation when the LGU requests a response.',
                       style: TextStyle(
                         fontSize: 13,
                         height: 1.4,
-                        color: AppColors.text,
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ),
@@ -283,8 +279,6 @@ class _DriverDashboardState extends State<DriverDashboard> {
   }
 
   Widget _profileHero() {
-    final image = _photoUrl == null ? null : NetworkImage(_photoUrl!);
-
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -295,26 +289,40 @@ class _DriverDashboardState extends State<DriverDashboard> {
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 31,
-            backgroundColor: Colors.white,
-            backgroundImage: image,
-            child: image == null
+          Container(
+            width: 62,
+            height: 62,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: _photoUrl == null || _photoUrl!.isEmpty
                 ? const Icon(
                     Icons.person_rounded,
                     color: AppColors.green,
                     size: 34,
                   )
-                : null,
+                : Image.network(
+                    _photoUrl!,
+                    width: 62,
+                    height: 62,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(
+                      Icons.person_rounded,
+                      color: AppColors.green,
+                      size: 34,
+                    ),
+                  ),
           ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Good day,',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                Text(
+                  '${_greeting()},',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -334,13 +342,19 @@ class _DriverDashboardState extends State<DriverDashboard> {
                     vertical: 5,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: _bodyNumber == 'N/A'
+                        ? AppColors.dangerSoft
+                        : Colors.white,
                     borderRadius: BorderRadius.circular(30),
                   ),
                   child: Text(
-                    'BODY NO. $_bodyNumber',
-                    style: const TextStyle(
-                      color: AppColors.greenDark,
+                    _bodyNumber == 'N/A'
+                        ? 'NO BODY NUMBER'
+                        : 'BODY NO. $_bodyNumber',
+                    style: TextStyle(
+                      color: _bodyNumber == 'N/A'
+                          ? AppColors.danger
+                          : AppColors.greenDark,
                       fontWeight: FontWeight.w800,
                       fontSize: 11,
                     ),
@@ -356,7 +370,6 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
   Widget _statusCard() {
     final clear = _activeReports == 0;
-
     final active = _status.toLowerCase() == 'active';
 
     return Card(
@@ -370,7 +383,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                   width: 10,
                   height: 10,
                   decoration: BoxDecoration(
-                    color: active ? Colors.green : Colors.orange,
+                    color: active ? AppColors.green : Colors.orange.shade800,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -385,7 +398,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                   _status,
                   style: TextStyle(
                     fontWeight: FontWeight.w800,
-                    color: active ? Colors.green : Colors.orange,
+                    color: active ? AppColors.green : Colors.orange.shade800,
                   ),
                 ),
               ],
@@ -404,11 +417,24 @@ class _DriverDashboardState extends State<DriverDashboard> {
               ],
             ),
             const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: RTODAStatusBadge(
-                status: clear ? 'Clear' : 'Under Investigation',
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: _statusPill(
+                    label: 'Account',
+                    value: _status,
+                    color: active ? AppColors.green : Colors.orange.shade800,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _statusPill(
+                    label: 'Reports',
+                    value: clear ? 'Clear' : 'Has open',
+                    color: clear ? AppColors.green : Colors.orange.shade800,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -416,16 +442,60 @@ class _DriverDashboardState extends State<DriverDashboard> {
     );
   }
 
+  Widget _statusPill({
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$label: ',
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.muted,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── SOS card — navigates to SOSScreen ─────────────────────
   Widget _sosButton() {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.red.shade50,
+        color: AppColors.dangerSoft,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.red.shade200),
+        border: Border.all(color: AppColors.danger.withValues(alpha: 0.25)),
       ),
       child: InkWell(
-        onTap: _showSOSConfirmation,
+        onTap: _openSOSScreen,
         borderRadius: BorderRadius.circular(18),
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -435,7 +505,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                 width: 50,
                 height: 50,
                 decoration: BoxDecoration(
-                  color: Colors.red,
+                  color: AppColors.danger,
                   borderRadius: BorderRadius.circular(15),
                 ),
                 child: const Icon(
@@ -454,15 +524,16 @@ class _DriverDashboardState extends State<DriverDashboard> {
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
-                        color: Colors.red,
+                        color: AppColors.danger,
                       ),
                     ),
                     SizedBox(height: 4),
                     Text(
-                      'Send an emergency alert to RTODA administrators.',
+                      'Open the emergency screen to alert RTODA '
+                      'administrators.',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.black54,
+                        color: AppColors.textSecondary,
                         height: 1.35,
                       ),
                     ),
@@ -472,7 +543,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
               const Icon(
                 Icons.arrow_forward_ios_rounded,
                 size: 16,
-                color: Colors.red,
+                color: AppColors.danger,
               ),
             ],
           ),
@@ -481,109 +552,16 @@ class _DriverDashboardState extends State<DriverDashboard> {
     );
   }
 
-  Future<void> _showSOSConfirmation() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.warning_rounded, color: Colors.red),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Send SOS Alert?',
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ),
-          ],
+  void _openSOSScreen() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SOSScreen(
+          userRole: 'driver',
+          bodyNumber: _bodyNumber == 'N/A' ? null : _bodyNumber,
         ),
-        content: const Text(
-          'An emergency alert will be sent to RTODA administrators using your driver account and body number.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('CANCEL'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('SEND SOS'),
-          ),
-        ],
       ),
     );
-
-    if (confirmed == true) {
-      await _sendSOS();
-    }
-  }
-
-  Future<void> _sendSOS() async {
-    final user = _supabase.auth.currentUser;
-
-    if (user == null) return;
-
-    if (_bodyNumber == 'N/A' || _bodyNumber.trim().isEmpty) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Your driver information is not available. Please try again.',
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
-
-      return;
-    }
-
-    try {
-      await _supabase.from('sos_alerts').insert({
-        'user_id': user.id,
-        'user_role': 'driver',
-        'body_number': _bodyNumber,
-        'status': 'active',
-        'created_at': DateTime.now().toUtc().toIso8601String(),
-      });
-
-      try {
-        await NotificationService.sendPushToRole(
-          role: 'admin',
-          title: 'Driver SOS Alert',
-          message: 'Driver $_bodyNumber has sent an emergency SOS alert.',
-          type: 'sos',
-        );
-      } catch (e) {
-        debugPrint('Admin SOS notification error: $e');
-      }
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('SOS alert sent to RTODA administrators.'),
-          backgroundColor: Colors.red,
-          duration: Duration(seconds: 4),
-        ),
-      );
-    } catch (e) {
-      debugPrint('SOS ERROR: $e');
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Unable to send SOS alert: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
   }
 
   Widget _metric(IconData icon, String label, String value) {
@@ -608,6 +586,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w800,
+                  color: AppColors.text,
                 ),
               ),
               Text(
@@ -622,39 +601,44 @@ class _DriverDashboardState extends State<DriverDashboard> {
   }
 
   Widget _action(IconData icon, String title, VoidCallback onTap) {
-    return Card(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: AppColors.greenSoft,
-                  borderRadius: BorderRadius.circular(13),
+    return Semantics(
+      button: true,
+      label: title,
+      child: Card(
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.greenSoft,
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: Icon(icon, color: AppColors.green),
                 ),
-                child: Icon(icon, color: AppColors.green),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 13,
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                    color: AppColors.text,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 3),
-              const Icon(
-                Icons.arrow_forward_rounded,
-                size: 17,
-                color: AppColors.muted,
-              ),
-            ],
+                const SizedBox(height: 3),
+                const Icon(
+                  Icons.arrow_forward_rounded,
+                  size: 17,
+                  color: AppColors.muted,
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -667,6 +651,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
       MaterialPageRoute(builder: (_) => const ProfileScreen()),
     );
 
+    if (!mounted) return;
     if (result == true) {
       await _fetchDriverProfile();
     }

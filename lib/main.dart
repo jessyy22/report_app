@@ -37,6 +37,8 @@ class RTODAPassengerApp extends StatefulWidget {
 
 class _RTODAPassengerAppState extends State<RTODAPassengerApp> {
   final AppLinks _appLinks = AppLinks();
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
   StreamSubscription<Uri>? _linkSubscription;
   StreamSubscription<AuthState>? _authSubscription;
 
@@ -47,29 +49,23 @@ class _RTODAPassengerAppState extends State<RTODAPassengerApp> {
     _initDeepLinks();
   }
 
+  // ── Auth listener — fires on password recovery ───────────
   void _initAuthListener() {
-    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen(
-      (data) {
-        if (data.event == AuthChangeEvent.passwordRecovery) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
+    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((
+      data,
+    ) {
+      debugPrint('AUTH EVENT: ${data.event}');
 
-            Navigator.of(
-              context,
-            ).pushNamedAndRemoveUntil('/reset-password', (route) => false);
-          });
-        }
-      },
-      onError: (error) {
-        debugPrint('Auth state error: $error');
-      },
-    );
+      if (data.event == AuthChangeEvent.passwordRecovery) {
+        _navigateTo('/reset-password');
+      }
+    });
   }
 
+  // ── Deep link init ────────────────────────────────────────
   Future<void> _initDeepLinks() async {
     try {
       final initialUri = await _appLinks.getInitialLink();
-
       if (initialUri != null) {
         _handleDeepLink(initialUri);
       }
@@ -88,22 +84,35 @@ class _RTODAPassengerAppState extends State<RTODAPassengerApp> {
   void _handleDeepLink(Uri uri) {
     debugPrint('RTODA DEEP LINK: $uri');
 
+    if (uri.scheme != 'rtoda') return;
+
+    switch (uri.host) {
+      case 'login-callback':
+        _navigateTo('/login');
+        break;
+      case 'reset-password':
+        // Handled by AuthChangeEvent.passwordRecovery above.
+        // No navigation here — prevents double-navigation.
+        debugPrint('Reset deep link received — waiting for auth event.');
+        break;
+      default:
+        debugPrint('Unknown deep link host: ${uri.host}');
+    }
+  }
+
+  // ── Navigator helper ──────────────────────────────────────
+  void _navigateTo(String route) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      final nav = _navigatorKey.currentState;
+      if (nav == null) return;
 
-      if (uri.scheme == 'rtoda' && uri.host == 'login-callback') {
-        Navigator.of(
-          context,
-        ).pushNamedAndRemoveUntil('/login', (route) => false);
-        return;
-      }
+      final current = ModalRoute.of(
+        _navigatorKey.currentContext ?? nav.context,
+      )?.settings.name;
 
-      if (uri.scheme == 'rtoda' && uri.host == 'reset-password') {
-        Navigator.of(
-          context,
-        ).pushNamedAndRemoveUntil('/reset-password', (route) => false);
-        return;
-      }
+      if (current == route) return; // avoid duplicate push
+
+      nav.pushNamedAndRemoveUntil(route, (_) => false);
     });
   }
 
@@ -117,17 +126,18 @@ class _RTODAPassengerAppState extends State<RTODAPassengerApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'RTODA Report App',
-      theme: AppTheme.light,
+      theme: AppTheme.lightTheme,
       initialRoute: '/',
       routes: {
-        '/': (context) => const SplashScreen(),
-        '/terms': (context) => const TermsPrivacyScreen(),
-        '/login': (context) => const LoginPage(),
-        '/reset-password': (context) => const ResetPasswordScreen(),
-        '/driver_dashboard': (context) => const DriverDashboard(),
-        '/navigation_bar': (context) => const NavigationBarApp(),
+        '/': (_) => const SplashScreen(),
+        '/terms': (_) => const TermsPrivacyScreen(),
+        '/login': (_) => const LoginPage(),
+        '/reset-password': (_) => const ResetPasswordScreen(),
+        '/driver_dashboard': (_) => const DriverDashboard(),
+        '/navigation_bar': (_) => const NavigationBarApp(),
       },
     );
   }

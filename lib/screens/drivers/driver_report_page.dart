@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../theme/app_theme.dart';
 
 class DriverReportsPage extends StatefulWidget {
   final String bodyNumber;
@@ -12,8 +15,9 @@ class DriverReportsPage extends StatefulWidget {
 
 class _DriverReportsPageState extends State<DriverReportsPage> {
   final supabase = Supabase.instance.client;
+
   bool _isLoading = true;
-  List<dynamic> _reports = [];
+  List<Map<String, dynamic>> _reports = [];
 
   @override
   void initState() {
@@ -21,260 +25,257 @@ class _DriverReportsPageState extends State<DriverReportsPage> {
     _fetchDriverReports();
   }
 
+  // ============================================================
+  // DATA
+  // ============================================================
   Future<void> _fetchDriverReports() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
+
     try {
       final data = await supabase
           .from('reports')
           .select(
-            'report_id, violation, location, status, incidentdate, incidenttime, evidence_url, driver_feedback',
+            'report_id, violation, report_type, location, '
+            'latitude, longitude, status, '
+            'incidentdate, incidenttime, created_at, '
+            'evidence_url, driver_feedback, description',
           )
           .eq('body_number', widget.bodyNumber)
-          .order('incidentdate', ascending: false);
+          .order('created_at', ascending: false);
+
+      if (!mounted) return;
 
       setState(() {
-        _reports = data ?? [];
+        _reports = List<Map<String, dynamic>>.from(data ?? []);
       });
     } catch (e) {
+      debugPrint('DRIVER REPORTS ERROR: $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error loading reports: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      _showSnack('Could not load reports: $e', error: true);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _submitFeedback(String reportId, String feedbackText) async {
-    try {
-      await supabase
-          .from('reports')
-          .update({'driver_feedback': feedbackText})
-          .eq('report_id', reportId);
+  Future<void> _submitFeedback(String reportId, String feedback) async {
+    await supabase
+        .from('reports')
+        .update({'driver_feedback': feedback})
+        .eq('report_id', reportId);
+  }
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Explanation submitted successfully.'),
-          backgroundColor: Colors.green,
-        ),
-      );
-
-      _fetchDriverReports();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+  // ============================================================
+  // HELPERS
+  // ============================================================
+  void _showSnack(String message, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
         SnackBar(
-          content: Text('Failed to submit explanation: $e'),
-          backgroundColor: Colors.red,
+          content: Text(message),
+          backgroundColor: error ? AppColors.danger : AppColors.green,
+          behavior: SnackBarBehavior.floating,
         ),
       );
+  }
+
+  Color _statusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'resolved':
+        return AppColors.green;
+      case 'under review':
+      case 'summoned':
+        return Colors.blue.shade700;
+      case 'dismissed':
+        return AppColors.muted;
+      default:
+        return Colors.orange.shade800;
     }
   }
 
-  void _showFeedbackModal(
-    BuildContext context,
-    String reportId,
-    String existingFeedback,
-  ) {
-    final TextEditingController feedbackController = TextEditingController(
-      text: existingFeedback,
-    );
+  bool _isResolved(String status) =>
+      status.toLowerCase() == 'resolved';
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+  // Prefer the modern `report_type`, fall back to legacy `violation`.
+  String _reportTitle(Map<String, dynamic> r) {
+    final modern = (r['report_type'] ?? '').toString().trim();
+    if (modern.isNotEmpty) return modern;
+    final legacy = (r['violation'] ?? '').toString().trim();
+    if (legacy.isNotEmpty) return legacy;
+    return 'Unspecified Incident';
+  }
+
+  // Prefer `location`, fall back to coordinates.
+  String _reportLocation(Map<String, dynamic> r) {
+    final text = (r['location'] ?? '').toString().trim();
+    if (text.isNotEmpty) return text;
+    final lat = r['latitude'];
+    final lng = r['longitude'];
+    if (lat is num && lng is num) {
+      return '${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}';
+    }
+    return 'Unknown Location';
+  }
+
+  // Combine `incidentdate` + `incidenttime`, fall back to `created_at`.
+  String _reportDate(Map<String, dynamic> r) {
+    final date = r['incidentdate']?.toString();
+    final time = r['incidenttime']?.toString();
+
+    if (date != null && date.isNotEmpty) {
+      final combined = time != null && time.isNotEmpty
+          ? '$date $time'
+          : date;
+      final parsed = DateTime.tryParse(combined);
+      if (parsed != null) {
+        return DateFormat('MMM d, y • hh:mm a').format(parsed.toLocal());
+      }
+      return combined;
+    }
+
+    final created = r['created_at']?.toString();
+    if (created != null && created.isNotEmpty) {
+      final parsed = DateTime.tryParse(created);
+      if (parsed != null) {
+        return DateFormat('MMM d, y • hh:mm a').format(parsed.toLocal());
+      }
+    }
+    return 'Unknown date';
+  }
+
+  String? _reportDescription(Map<String, dynamic> r) {
+    final d = (r['description'] ?? '').toString().trim();
+    return d.isEmpty ? null : d;
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('My Report History')),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _fetchDriverReports,
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _reports.isEmpty
+                  ? _buildEmptyState()
+                  : ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                      itemCount: _reports.length,
+                      itemBuilder: (context, i) =>
+                          _buildReportCard(_reports[i]),
+                    ),
+        ),
       ),
-      builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-            top: 24,
-            left: 20,
-            right: 20,
-          ),
+    );
+  }
+
+  // ── Empty state ─────────────────────────────────────────────
+  Widget _buildEmptyState() {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(32),
+      children: [
+        const SizedBox(height: 80),
+        Semantics(
+          label:
+              'All clear. No complaints have been filed against your body number.',
           child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                "Submit Driver Explanation",
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                "Provide your perspective or context regarding this incident. Your response will be reviewed by RTODA officers.",
-                style: TextStyle(fontSize: 13, color: Colors.black54),
+              Icon(
+                Icons.assignment_turned_in_rounded,
+                size: 72,
+                color: AppColors.green.withValues(alpha: 0.30),
               ),
               const SizedBox(height: 16),
-              TextField(
-                controller: feedbackController,
-                maxLines: 4,
-                decoration: InputDecoration(
-                  hintText: "Type your statement here...",
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: Colors.green.shade700,
-                      width: 2,
-                    ),
-                  ),
+              const Text(
+                'All Clear',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.text,
                 ),
               ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green.shade700,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  onPressed: () {
-                    if (feedbackController.text.trim().isNotEmpty) {
-                      _submitFeedback(reportId, feedbackController.text.trim());
-                      Navigator.pop(context);
-                    }
-                  },
-                  child: const Text(
-                    "Submit Statement",
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
+              const SizedBox(height: 6),
+              const Text(
+                'No commuter complaints have been filed against '
+                'your body number.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppColors.textSecondary,
+                  height: 1.4,
                 ),
               ),
             ],
           ),
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF6F8FA),
-      appBar: AppBar(
-        title: const Text(
-          "My Report History",
-          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
-        backgroundColor: Colors.green.shade700,
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Colors.green))
-          : _reports.isEmpty
-          ? _buildEmptyState()
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: _reports.length,
-              itemBuilder: (context, index) {
-                final report = _reports[index];
-                return _buildReportCard(report);
-              },
-            ),
+      ],
     );
   }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.assignment_turned_in_rounded,
-            size: 72,
-            color: Colors.green.shade200,
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            "All Clear!",
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            "No commuter complaints have been filed against your body number.",
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, color: Colors.black54),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildReportCard(dynamic report) {
-    final String status = report['status'] ?? 'Pending';
-    final String explanation = report['driver_feedback'] ?? '';
-    final bool hasResponded = explanation.isNotEmpty;
-
-    final String incidentDate = report['incidentdate'] ?? 'Unknown Date';
-    final String incidentTime = report['incidenttime'] ?? '';
-    final String? evidenceUrl = report['evidence_url'];
-
-    Color statusColor = Colors.orange;
-    if (status == 'Resolved') statusColor = Colors.green;
-    if (status == 'Under Review' || status == 'Summoned')
-      statusColor = Colors.blue;
+  // ── Report card ─────────────────────────────────────────────
+  Widget _buildReportCard(Map<String, dynamic> report) {
+    final status = (report['status'] ?? 'Pending').toString();
+    final explanation = (report['driver_feedback'] ?? '').toString();
+    final hasResponded = explanation.trim().isNotEmpty;
+    final isResolved = _isResolved(status);
+    final statusColor = _statusColor(status);
+    final reportId = report['report_id']?.toString() ?? '';
+    final evidenceUrl = (report['evidence_url'] ?? '').toString();
+    final description = _reportDescription(report);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade200, width: 1),
+        border: Border.all(color: AppColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Header ─────────────────────────────────────────
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: Text(
-                  report['violation'] ?? 'Unspecified Incident',
+                  _reportTitle(report),
                   style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.text,
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
+                  color: statusColor.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: statusColor.withValues(alpha: 0.25),
+                  ),
                 ),
                 child: Text(
                   status.toUpperCase(),
                   style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
                     color: statusColor,
+                    letterSpacing: 0.3,
                   ),
                 ),
               ),
@@ -282,19 +283,22 @@ class _DriverReportsPageState extends State<DriverReportsPage> {
           ),
           const SizedBox(height: 8),
 
-          // Location row
+          // ── Location ───────────────────────────────────────
           Row(
             children: [
               const Icon(
                 Icons.location_on_rounded,
                 size: 14,
-                color: Colors.black38,
+                color: AppColors.muted,
               ),
               const SizedBox(width: 4),
               Expanded(
                 child: Text(
-                  report['location'] ?? 'Unknown Location',
-                  style: const TextStyle(fontSize: 12, color: Colors.black45),
+                  _reportLocation(report),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.muted,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -302,67 +306,144 @@ class _DriverReportsPageState extends State<DriverReportsPage> {
           ),
           const SizedBox(height: 4),
 
-          // Date and Time row
+          // ── Date ───────────────────────────────────────────
           Row(
             children: [
               const Icon(
                 Icons.calendar_today_rounded,
                 size: 14,
-                color: Colors.black38,
+                color: AppColors.muted,
               ),
               const SizedBox(width: 4),
               Text(
-                "$incidentDate ${incidentTime.isNotEmpty ? '• $incidentTime' : ''}",
-                style: const TextStyle(fontSize: 12, color: Colors.black45),
+                _reportDate(report),
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.muted,
+                ),
               ),
             ],
           ),
 
-          // Evidence Image Thumbnail if available
-          if (evidenceUrl != null && evidenceUrl.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.network(
-                evidenceUrl,
-                height: 120,
-                width: double.infinity,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) =>
-                    const SizedBox.shrink(),
+          // ── Commuter description ───────────────────────────
+          if (description != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.borderLight),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Complainant’s description',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.muted,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    description,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textSecondary,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
 
-          const Divider(height: 24),
+          // ── Evidence ───────────────────────────────────────
+          if (evidenceUrl.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                onTap: () => _openEvidence(evidenceUrl),
+                child: Image.network(
+                  evidenceUrl,
+                  height: 140,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  semanticLabel: 'Evidence photo for this report',
+                  loadingBuilder: (_, child, progress) {
+                    if (progress == null) return child;
+                    return Container(
+                      height: 140,
+                      color: AppColors.borderLight,
+                      child: const Center(
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                  errorBuilder: (_, __, ___) => Container(
+                    height: 140,
+                    color: AppColors.borderLight,
+                    child: const Center(
+                      child: Icon(
+                        Icons.broken_image_outlined,
+                        color: AppColors.muted,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
 
+          const Divider(height: 24, color: AppColors.border),
+
+          // ── Explanation ────────────────────────────────────
           if (hasResponded) ...[
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.grey.shade100, width: 1),
+                color: AppColors.greenSoft,
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    "Your Explanation Statement:",
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green.shade800,
-                    ),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.chat_bubble_outline,
+                        size: 14,
+                        color: AppColors.greenDark,
+                      ),
+                      const SizedBox(width: 6),
+                      const Text(
+                        'Your explanation',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.greenDark,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
                   Text(
                     explanation,
                     style: const TextStyle(
                       fontSize: 13,
-                      color: Colors.black87,
-                      fontStyle: FontStyle.italic,
+                      color: AppColors.textSecondary,
+                      height: 1.4,
                     ),
                   ),
                 ],
@@ -371,41 +452,245 @@ class _DriverReportsPageState extends State<DriverReportsPage> {
             const SizedBox(height: 12),
           ],
 
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(
-                  color: hasResponded
-                      ? Colors.grey.shade400
-                      : Colors.green.shade600,
+          // ── Action ─────────────────────────────────────────
+          if (!isResolved)
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(
+                    color: hasResponded
+                        ? AppColors.border
+                        : AppColors.green,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  foregroundColor:
+                      hasResponded ? AppColors.text : AppColors.green,
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+                icon: Icon(
+                  hasResponded
+                      ? Icons.edit_note_rounded
+                      : Icons.rate_review_rounded,
+                  size: 20,
                 ),
-              ),
-              icon: Icon(
-                hasResponded
-                    ? Icons.edit_note_rounded
-                    : Icons.rate_review_rounded,
-                color: hasResponded ? Colors.black87 : Colors.green.shade700,
-                size: 20,
-              ),
-              label: Text(
-                hasResponded ? "Modify Explanation" : "Submit Explanation",
-                style: TextStyle(
-                  color: hasResponded ? Colors.black87 : Colors.green.shade700,
-                  fontWeight: FontWeight.bold,
+                label: Text(
+                  hasResponded
+                      ? 'Modify Explanation'
+                      : 'Submit Explanation',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
+                onPressed: reportId.isEmpty
+                    ? null
+                    : () => _showFeedbackModal(reportId, explanation),
               ),
-              onPressed: () => _showFeedbackModal(
-                context,
-                report['report_id'].toString(),
-                explanation,
+            )
+          else
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.verified_rounded,
+                    size: 16,
+                    color: AppColors.green,
+                  ),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'This case has been resolved. No further action '
+                      'is needed.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.muted,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
         ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // FEEDBACK MODAL
+  // ============================================================
+  void _showFeedbackModal(String reportId, String existing) {
+    final controller = TextEditingController(text: existing);
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 8,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+          ),
+          child: StatefulBuilder(
+            builder: (ctx, setModalState) {
+              bool saving = false;
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Submit Driver Explanation',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.text,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Provide your perspective or context regarding '
+                    'this incident. Your response will be reviewed '
+                    'by RTODA officers.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textSecondary,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    maxLines: 5,
+                    maxLength: 500,
+                    enabled: !saving,
+                    decoration: InputDecoration(
+                      hintText: 'Type your statement here…',
+                      filled: true,
+                      fillColor: AppColors.background,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide:
+                            const BorderSide(color: AppColors.border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide:
+                            const BorderSide(color: AppColors.border),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(
+                          color: AppColors.green,
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.green,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: saving
+                          ? null
+                          : () async {
+                              final text = controller.text.trim();
+                              if (text.isEmpty) return;
+
+                              setModalState(() => saving = true);
+                              try {
+                                await _submitFeedback(reportId, text);
+                                if (!mounted) return;
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                await _fetchDriverReports();
+                                if (!mounted) return;
+                                _showSnack(
+                                  'Explanation submitted successfully.',
+                                );
+                              } catch (e) {
+                                if (!mounted) return;
+                                setModalState(() => saving = false);
+                                _showSnack(
+                                  'Failed to submit explanation: $e',
+                                  error: true,
+                                );
+                              }
+                            },
+                      child: saving
+                          ? const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                                SizedBox(width: 10),
+                                Text('Saving…'),
+                              ],
+                            )
+                          : const Text(
+                              'Submit Statement',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    ).whenComplete(controller.dispose);
+  }
+
+  void _openEvidence(String url) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => Dialog(
+        insetPadding: const EdgeInsets.all(16),
+        child: Stack(
+          children: [
+            InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4,
+              child: Image.network(url, fit: BoxFit.contain),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: IconButton(
+                tooltip: 'Close',
+                icon: const Icon(Icons.close, color: Colors.white),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.black54,
+                ),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

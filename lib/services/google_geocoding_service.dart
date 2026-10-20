@@ -1,105 +1,93 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class GoogleGeocodingService {
-  static const String apiKey = "AIzaSyAeEzeHJPfDS33XJiZk6vDl2olcua1seqs";
+  // ── No API key here. The Edge Function holds it. ─────────
 
+  final SupabaseClient _supabase = Supabase.instance.client;
+
+  // ── In-memory cache (rounded to ~11m precision) ─────────
+  static final Map<String, ({String? address, String? barangay})> _cache = {};
+
+  // ============================================================
+  // PUBLIC API (unchanged signatures — drop-in replacement)
+  // ============================================================
+
+  /// Returns the full formatted address for the given coordinates.
   Future<String?> getFullAddress({
     required double latitude,
     required double longitude,
   }) async {
-    try {
-      final url =
-          "https://maps.googleapis.com/maps/api/geocode/json"
-          "?latlng=$latitude,$longitude"
-          "&key=$apiKey";
-
-      final response = await http.get(Uri.parse(url));
-
-      if (response.statusCode != 200) {
-        print(response.body);
-        return null;
-      }
-
-      final data = jsonDecode(response.body);
-
-      if (data["status"] != "OK") {
-        print(data);
-        return null;
-      }
-
-      final results = data["results"] as List;
-
-      if (results.isEmpty) {
-        return null;
-      }
-
-      final formattedAddress = results.first["formatted_address"];
-
-      if (formattedAddress == null) {
-        return null;
-      }
-
-      print("========== Google Geocoding ==========");
-      print("Complete Address: $formattedAddress");
-      print("======================================");
-
-      return formattedAddress.toString().trim();
-    } catch (e) {
-      print("Google Geocoding Error: $e");
-      return null;
-    }
+    final result = await reverseGeocode(
+      latitude: latitude,
+      longitude: longitude,
+    );
+    return result.address;
   }
 
-  // Kept for compatibility with any existing code.
+  /// Returns the barangay name for the given coordinates.
   Future<String?> getBarangay({
     required double latitude,
     required double longitude,
   }) async {
-    try {
-      final url =
-          "https://maps.googleapis.com/maps/api/geocode/json"
-          "?latlng=$latitude,$longitude"
-          "&key=$apiKey";
+    final result = await reverseGeocode(
+      latitude: latitude,
+      longitude: longitude,
+    );
+    return result.barangay;
+  }
 
-      final response = await http.get(Uri.parse(url));
+  /// Single call to the Edge Function — returns both address + barangay.
+  Future<({String? address, String? barangay})> reverseGeocode({
+    required double latitude,
+    required double longitude,
+  }) async {
+    final cacheKey =
+        '${latitude.toStringAsFixed(4)},${longitude.toStringAsFixed(4)}';
 
-      if (response.statusCode != 200) {
-        return null;
-      }
-
-      final data = jsonDecode(response.body);
-
-      if (data["status"] != "OK") {
-        return null;
-      }
-
-      final results = data["results"] as List;
-
-      for (final result in results) {
-        final components = result["address_components"] as List;
-
-        for (final component in components) {
-          final types = List<String>.from(component["types"]);
-
-          if (types.contains("administrative_area_level_4")) {
-            return component["long_name"];
-          }
-
-          if (types.contains("sublocality")) {
-            return component["long_name"];
-          }
-
-          if (types.contains("sublocality_level_1")) {
-            return component["long_name"];
-          }
-        }
-      }
-
-      return null;
-    } catch (e) {
-      print("Google Geocoding Error: $e");
-      return null;
+    // Cache hit — no network call
+    if (_cache.containsKey(cacheKey)) {
+      debugPrint('Geocoding: Cache hit for $cacheKey');
+      return _cache[cacheKey]!;
     }
+
+    try {
+      final response = await _supabase.functions.invoke(
+        'geocode',
+        body: {'lat': latitude, 'lng': longitude},
+      );
+
+      if (response.status != 200) {
+        debugPrint(
+          'Geocoding Edge Function error: '
+          'status=${response.status} data=${response.data}',
+        );
+        return (address: null, barangay: null);
+      }
+
+      final data = response.data as Map<String, dynamic>;
+      final output = (
+        address: data['address']?.toString(),
+        barangay: data['barangay']?.toString(),
+      );
+
+      _cache[cacheKey] = output;
+
+      debugPrint(
+        'Geocoding: $cacheKey → '
+        'address=${output.address != null ? 'OK' : 'null'}, '
+        'barangay=${output.barangay}',
+      );
+
+      return output;
+    } catch (e) {
+      debugPrint('Geocoding Edge Function call failed: $e');
+      return (address: null, barangay: null);
+    }
+  }
+
+  /// Clear the in-memory cache (useful for testing).
+  static void clearCache() {
+    _cache.clear();
   }
 }

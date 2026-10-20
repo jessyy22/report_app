@@ -1,9 +1,12 @@
-import 'package:flutter/material.dart';
-import '../models/place.dart';
-import '../services/google_places_service.dart';
-import 'package:geolocator/geolocator.dart';
-import '../services/google_geocoding_service.dart';
 import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+
+import '../models/place.dart';
+import '../services/google_geocoding_service.dart';
+import '../services/google_places_service.dart';
+import '../theme/app_theme.dart';
 
 class LocationSearch extends StatefulWidget {
   final String label;
@@ -38,87 +41,169 @@ class _LocationSearchState extends State<LocationSearch> {
 
   List<Place> _results = [];
   bool _loading = false;
+  bool _hasSearched = false;
 
-  String _latestQuery = "";
+  String _latestQuery = '';
+  int _searchId = 0;
 
+  // ============================================================
+  // SEARCH
+  // ============================================================
   Future<void> _search(String value) async {
-    if (value.trim().length < 3) {
-      if (!mounted) return;
+    final trimmed = value.trim();
 
+    if (trimmed.length < 3) {
+      if (!mounted) return;
       setState(() {
         _results = [];
         _loading = false;
+        _hasSearched = false;
       });
-
       return;
     }
 
     _latestQuery = value;
     final currentQuery = value;
+    final myId = ++_searchId;
 
     if (!mounted) return;
-
     setState(() {
       _loading = true;
+      _hasSearched = false;
     });
 
-    final places = await _service.searchPlaces(value);
+    try {
+      final places = await _service.searchPlaces(value);
 
-    // Ignore outdated responses
-    if (currentQuery != _latestQuery) return;
+      // Ignore stale responses (user typed more, or GPS fired)
+      if (myId != _searchId) return;
+      if (currentQuery != _latestQuery) return;
+      if (!mounted) return;
 
-    if (!mounted) return;
-
-    setState(() {
-      _results = places;
-      _loading = false;
-    });
+      setState(() {
+        _results = places;
+        _loading = false;
+        _hasSearched = true;
+      });
+    } catch (e) {
+      debugPrint('SEARCH ERROR: $e');
+      if (myId != _searchId) return;
+      if (!mounted) return;
+      setState(() {
+        _results = [];
+        _loading = false;
+        _hasSearched = true;
+      });
+    }
   }
 
+  // ============================================================
+  // CURRENT LOCATION
+  // ============================================================
   Future<void> _useCurrentLocation() async {
     try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return;
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        _showError('Please turn on your device location.');
+        return;
+      }
 
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) return;
+        if (permission == LocationPermission.denied) {
+          _showError('Location permission denied.');
+          return;
+        }
       }
 
-      if (permission == LocationPermission.deniedForever) return;
+      if (permission == LocationPermission.deniedForever) {
+        _showError(
+          'Location permission is permanently denied. '
+          'Please enable it in your device settings.',
+        );
+        return;
+      }
 
+      final myId = ++_searchId;
       setState(() => _loading = true);
 
-      // Using modern geolocator locationSettings syntax
-      Position position = await Geolocator.getCurrentPosition(
+      final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
         ),
-      );
+      ).timeout(const Duration(seconds: 20));
 
-      String? barangay = await _reverseService.getBarangay(
+      final barangay = await _reverseService.getBarangay(
         latitude: position.latitude,
         longitude: position.longitude,
       );
 
-      Place currentPlace = Place(
-        name: barangay ?? "Current Location",
-        fullAddress: "Current GPS Location",
-        barangay: barangay ?? "",
+      if (myId != _searchId) return;
+      if (!mounted) return;
+
+      final currentPlace = Place(
+        name: barangay ?? 'Current Location',
+        fullAddress: 'Current GPS Location',
+        barangay: barangay ?? '',
         latitude: position.latitude,
         longitude: position.longitude,
       );
 
       _controller.text = currentPlace.name;
       widget.onSelected(currentPlace);
+      widget.onSearchFinished?.call();
+      _focusNode.unfocus();
     } catch (e) {
-      print("GPS Error: $e");
+      debugPrint('GPS ERROR: $e');
+      if (mounted) {
+        _showError('Could not get your current location.');
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  // ============================================================
+  // HELPERS
+  // ============================================================
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: AppColors.danger,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  void _clearSearch() {
+    _controller.clear();
+    setState(() {
+      _results = [];
+      _loading = false;
+      _hasSearched = false;
+    });
+  }
+
+  void _selectPlace(Place place) {
+    _controller.text = place.name;
+    widget.onSelected(place);
+    widget.onSearchFinished?.call();
+    setState(() {
+      _results = [];
+      _hasSearched = false;
+    });
+    _focusNode.unfocus();
+  }
+
+  // ============================================================
+  // LIFECYCLE
+  // ============================================================
   @override
   void initState() {
     super.initState();
@@ -138,106 +223,205 @@ class _LocationSearchState extends State<LocationSearch> {
     super.dispose();
   }
 
+  // ============================================================
+  // BUILD
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(widget.label, style: const TextStyle(fontWeight: FontWeight.bold)),
-
-        const SizedBox(height: 8),
-
-        TextField(
-          focusNode: _focusNode,
-          controller: _controller,
-          onTap: () {
-            widget.onSearchStarted?.call();
-          },
-
-          onChanged: (value) {
-            widget.onSearchStarted?.call();
-
-            if (_debounce?.isActive ?? false) {
-              _debounce!.cancel();
-            }
-
-            _debounce = Timer(const Duration(milliseconds: 700), () {
-              _search(value);
-            });
-          },
-          decoration: InputDecoration(
-            prefixIcon: Icon(widget.icon),
-
-            suffixIcon: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_loading)
-                  const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
-                if (widget.allowCurrentLocation)
-                  IconButton(
-                    icon: const Icon(Icons.my_location, color: Colors.green),
-                    tooltip: "Use Current Location",
-                    onPressed: _useCurrentLocation,
-                  ),
-              ],
-            ),
-
-            hintText: "Search location...",
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        Text(
+          widget.label,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: AppColors.text,
           ),
         ),
+        const SizedBox(height: 8),
 
-        if (_results.isNotEmpty)
+        // ── Search field ──────────────────────────────────────
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _controller,
+          builder: (context, value, _) {
+            return TextField(
+              focusNode: _focusNode,
+              controller: _controller,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (v) {
+                _debounce?.cancel();
+                _search(v);
+              },
+              onTap: () {
+                widget.onSearchStarted?.call();
+              },
+              onChanged: (v) {
+                if (_debounce?.isActive ?? false) _debounce!.cancel();
+                _debounce = Timer(
+                  const Duration(milliseconds: 700),
+                  () => _search(v),
+                );
+                // Rebuild so the clear button appears/disappears.
+                setState(() {});
+              },
+              decoration: InputDecoration(
+                prefixIcon: Icon(widget.icon, color: AppColors.green),
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_loading)
+                      const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.green,
+                          ),
+                        ),
+                      ),
+                    if (!_loading && value.text.isNotEmpty)
+                      IconButton(
+                        icon: const Icon(
+                          Icons.close,
+                          size: 18,
+                          color: AppColors.muted,
+                        ),
+                        tooltip: 'Clear',
+                        onPressed: _clearSearch,
+                      ),
+                    if (widget.allowCurrentLocation)
+                      IconButton(
+                        icon: const Icon(
+                          Icons.my_location,
+                          color: AppColors.green,
+                        ),
+                        tooltip: 'Use current location',
+                        onPressed: _loading ? null : _useCurrentLocation,
+                      ),
+                  ],
+                ),
+                hintText: 'Search location…',
+                filled: true,
+                fillColor: AppColors.card,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: const BorderSide(color: AppColors.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: const BorderSide(color: AppColors.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: const BorderSide(
+                    color: AppColors.green,
+                    width: 1.5,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+
+        // ── Min-chars hint ────────────────────────────────────
+        if (_controller.text.isNotEmpty &&
+            _controller.text.trim().length < 3 &&
+            !_loading) ...[
+          const Padding(
+            padding: EdgeInsets.only(top: 4, left: 4),
+            child: Text(
+              'Type at least 3 characters to search',
+              style: TextStyle(fontSize: 11, color: AppColors.muted),
+            ),
+          ),
+        ],
+
+        // ── Results ───────────────────────────────────────────
+        if (_results.isNotEmpty) _buildResultsDropdown(),
+
+        // ── Empty results ────────────────────────────────────
+        if (_hasSearched && _results.isEmpty && !_loading)
           Container(
             margin: const EdgeInsets.only(top: 5),
-            constraints: const BoxConstraints(maxHeight: 220),
-
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.black12),
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
             ),
-
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: _results.length,
-              itemBuilder: (context, index) {
-                final place = _results[index];
-
-                return ListTile(
-                  leading: const Icon(Icons.location_on),
-
-                  title: Text(place.name),
-
-                  subtitle: Text(
-                    place.fullAddress,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+            child: const Row(
+              children: [
+                Icon(Icons.search_off, color: AppColors.muted, size: 20),
+                SizedBox(width: 8),
+                Text(
+                  'No places found',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
                   ),
-
-                  onTap: () {
-                    _controller.text = place.name;
-
-                    widget.onSelected(place);
-                    widget.onSearchFinished?.call();
-                    setState(() {
-                      _results.clear();
-                    });
-
-                    FocusScope.of(context);
-                  },
-                );
-              },
+                ),
+              ],
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildResultsDropdown() {
+    return Container(
+      margin: const EdgeInsets.only(top: 5),
+      constraints: const BoxConstraints(maxHeight: 240),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: ListView.separated(
+        shrinkWrap: true,
+        padding: EdgeInsets.zero,
+        itemCount: _results.length,
+        separatorBuilder: (_, __) =>
+            const Divider(height: 1, color: AppColors.borderLight),
+        itemBuilder: (context, index) {
+          final place = _results[index];
+          return ListTile(
+            leading: const Icon(
+              Icons.location_on,
+              color: AppColors.green,
+              size: 20,
+            ),
+            title: Text(
+              place.name,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppColors.text,
+              ),
+            ),
+            subtitle: Text(
+              place.fullAddress,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            onTap: () => _selectPlace(place),
+          );
+        },
+      ),
     );
   }
 }

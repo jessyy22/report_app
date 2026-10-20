@@ -1,99 +1,89 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class AppColors {
-  static const green = Color(0xFF0B9E4B);
-  static const greenDark = Color(0xFF087A3A);
-  static const greenSoft = Color(0xFFE9F7EF);
-  static const yellow = Color(0xFFF5D547);
-  static const background = Color(0xFFF6F8FA);
-  static const text = Color(0xFF17221B);
-  static const muted = Color(0xFF68736D);
-  static const border = Color(0xFFE4E9E6);
-  static const danger = Color(0xFFD92D20);
+  // Primary Civic Palette (WCAG AA Compliant)
+  static const Color greenDark = Color(0xFF0F5132); // Deep Forest Green
+  static const Color green = Color(0xFF166534); // Primary Accent Green
+  static const Color greenSoft = Color(0xFFE8F5E9); // Subtle container tint
+  static const Color greenSurface = Color(0xFFF4F9F5);
+
+  // High-Contrast Neutral Surfaces
+  static const Color background = Color(0xFFF8FAFC); // Clean off-white canvas
+  static const Color card = Colors.white;
+  static const Color border = Color(0xFFE2E8F0); // Hairline card border
+  static const Color borderLight = Color(0xFFF1F5F9);
+
+  // Typography Tokens
+  static const Color text = Color(0xFF0F172A); // Slate 900 for titles
+  static const Color textSecondary = Color(0xFF334155); // Slate 700 for body
+  static const Color muted = Color(0xFF64748B); // Slate 500 for captions
+
+  // Emergency Semantic Token (High contrast red only for genuine SOS)
+  static const Color danger = Color(0xFFB91C1C); // Red 700
+  static const Color dangerSoft = Color(0xFFFEE2E2);
 }
 
 class AppTheme {
-  static ThemeData get light {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: AppColors.green,
-      brightness: Brightness.light,
-    ).copyWith(
-      primary: AppColors.green,
-      onPrimary: Colors.white,
-      secondary: AppColors.yellow,
-      surface: Colors.white,
-    );
-
+  static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,
-      colorScheme: scheme,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: AppColors.green,
+        primary: AppColors.green,
+        onPrimary: Colors.white,
+        surface: AppColors.card,
+        onSurface: AppColors.text,
+      ),
       scaffoldBackgroundColor: AppColors.background,
-      fontFamily: 'Roboto',
+      fontFamily: kIsWeb
+          ? '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto'
+          : null,
       appBarTheme: const AppBarTheme(
-        backgroundColor: AppColors.green,
-        foregroundColor: Colors.white,
-        centerTitle: false,
+        backgroundColor: Colors.white,
+        foregroundColor: AppColors.text,
         elevation: 0,
+        scrolledUnderElevation: 1,
+        centerTitle: false,
         titleTextStyle: TextStyle(
-          color: Colors.white,
-          fontSize: 19,
-          fontWeight: FontWeight.w700,
+          color: AppColors.text,
+          fontSize: 18,
+          fontWeight: FontWeight.w800,
+          letterSpacing: -0.4,
         ),
       ),
       cardTheme: CardThemeData(
-        color: Colors.white,
+        color: AppColors.card,
         elevation: 0,
-        margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
           side: const BorderSide(color: AppColors.border),
         ),
+        margin: EdgeInsets.zero,
       ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: AppColors.border),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: AppColors.border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: AppColors.green, width: 1.5),
-        ),
-      ),
-      elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ElevatedButton.styleFrom(
-          minimumSize: const Size.fromHeight(50),
-          backgroundColor: AppColors.green,
-          foregroundColor: Colors.white,
-          elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          textStyle: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: Colors.white,
-        indicatorColor: AppColors.greenSoft,
-        labelTextStyle: WidgetStateProperty.resolveWith((states) {
-          return TextStyle(
-            fontSize: 12,
-            fontWeight: states.contains(WidgetState.selected)
-                ? FontWeight.w700
-                : FontWeight.w500,
-            color: states.contains(WidgetState.selected)
-                ? AppColors.greenDark
-                : AppColors.muted,
-          );
-        }),
-      ),
-      snackBarTheme: SnackBarThemeData(
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    );
+  }
+}
+
+/// Responsive wrapper that centers and constrains layouts on iOS Web & Tablets
+class ResponsiveContainer extends StatelessWidget {
+  final Widget child;
+  final double maxWidth;
+  final EdgeInsetsGeometry padding;
+
+  const ResponsiveContainer({
+    super.key,
+    required this.child,
+    this.maxWidth = 760,
+    this.padding = const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        child: Padding(padding: padding, child: child),
       ),
     );
   }

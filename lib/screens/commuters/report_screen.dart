@@ -1,16 +1,18 @@
-import 'dart:io';
 import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:flutter/services.dart';
-import '../../services/notification_service.dart';
+
 import '../../services/google_geocoding_service.dart';
+import '../../services/notification_service.dart';
 import '../../services/reverse_geocoding_service.dart';
 
 class ReportForm extends StatefulWidget {
@@ -34,11 +36,11 @@ class _ReportFormState extends State<ReportForm> {
   final _contact = TextEditingController();
   final _body = TextEditingController();
   final _lateReason = TextEditingController();
+  final _otherReason = TextEditingController();
 
   final _picker = ImagePicker();
 
   final GoogleGeocodingService _googleGeocoding = GoogleGeocodingService();
-
   final ReverseGeocodingService _reverseGeocoding = ReverseGeocodingService();
 
   String _tricycleId = '';
@@ -60,7 +62,9 @@ class _ReportFormState extends State<ReportForm> {
 
   ReportType _reportType = ReportType.reportNow;
 
-  final items = [
+  Timer? _lookupDebounce;
+
+  final items = const [
     'Overcharging',
     'Discriminate / Refusal to convey',
     'Discourteous / Arrogant Driver',
@@ -71,23 +75,68 @@ class _ReportFormState extends State<ReportForm> {
     'Others',
   ];
 
+  bool get _canSubmit =>
+      !_uploading &&
+      _declarationAccepted &&
+      _tricycleId.isNotEmpty &&
+      _bodyError.isEmpty &&
+      _lat != null &&
+      _lng != null;
+
   @override
   void initState() {
     super.initState();
-
     _setDateTime();
     _loadProfile();
-    _getLocation();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _getLocation();
+    });
   }
 
+  @override
+  void dispose() {
+    _lookupDebounce?.cancel();
+    _date.dispose();
+    _time.dispose();
+    _driver.dispose();
+    _location.dispose();
+    _name.dispose();
+    _address.dispose();
+    _contact.dispose();
+    _body.dispose();
+    _lateReason.dispose();
+    _otherReason.dispose();
+    super.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Snackbar helper
+  // ---------------------------------------------------------------------------
+  void _show(String message, {bool error = false}) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: error ? Colors.red.shade700 : Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Profile
+  // ---------------------------------------------------------------------------
   Future<void> _loadProfile() async {
     final db = Supabase.instance.client;
     final user = db.auth.currentUser;
 
     if (user == null) {
-      if (mounted) {
-        setState(() => _loadingProfile = false);
-      }
+      if (mounted) setState(() => _loadingProfile = false);
       return;
     }
 
@@ -102,9 +151,7 @@ class _ReportFormState extends State<ReportForm> {
 
       if (data == null) {
         setState(() => _loadingProfile = false);
-
         _show('No commuter profile was found for this account.', error: true);
-
         return;
       }
 
@@ -114,36 +161,35 @@ class _ReportFormState extends State<ReportForm> {
       setState(() => _loadingProfile = false);
     } catch (e) {
       debugPrint('Profile error: $e');
-
-      if (mounted) {
-        setState(() => _loadingProfile = false);
-
-        _show('Unable to load commuter information.', error: true);
-      }
+      if (!mounted) return;
+      setState(() => _loadingProfile = false);
+      _show('Unable to load commuter information.', error: true);
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Date / Time
+  // ---------------------------------------------------------------------------
   void _setDateTime() {
     final now = DateTime.now();
-
     _date.text = DateFormat('yyyy-MM-dd').format(now);
     _time.text = DateFormat('hh:mm a').format(now);
   }
 
+  // ---------------------------------------------------------------------------
+  // Location
+  // ---------------------------------------------------------------------------
   Future<Position?> _getAccuratePosition() async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-
       if (!serviceEnabled) {
         debugPrint('GPS: Location services are disabled.');
         return null;
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
-
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
-
         if (permission == LocationPermission.denied) {
           debugPrint('GPS: Location permission denied.');
           return null;
@@ -163,7 +209,6 @@ class _ReportFormState extends State<ReportForm> {
       }
 
       Position? bestPosition;
-
       final completer = Completer<Position?>();
       StreamSubscription<Position>? subscription;
 
@@ -179,20 +224,17 @@ class _ReportFormState extends State<ReportForm> {
 
               debugPrint(
                 'GPS update: '
-                '${position.latitude}, '
-                '${position.longitude} '
+                '${position.latitude}, ${position.longitude} '
                 'accuracy=${position.accuracy}m '
                 'age=${age.inSeconds}s '
                 'mocked=${position.isMocked}',
               );
 
-              // Ignore old/stale readings.
               if (age > const Duration(seconds: 15)) {
                 debugPrint('GPS: Ignored stale location.');
                 return;
               }
 
-              // Ignore mocked locations.
               if (position.isMocked) {
                 debugPrint('GPS: Ignored mocked location.');
                 return;
@@ -201,7 +243,6 @@ class _ReportFormState extends State<ReportForm> {
               if (bestPosition == null ||
                   position.accuracy < bestPosition!.accuracy) {
                 bestPosition = position;
-
                 debugPrint(
                   'GPS: New best position '
                   '${position.latitude}, ${position.longitude} '
@@ -209,25 +250,18 @@ class _ReportFormState extends State<ReportForm> {
                 );
               }
 
-              // Good enough to use immediately.
               if (position.accuracy <= 20 && !completer.isCompleted) {
                 completer.complete(position);
               }
             },
             onError: (error) {
               debugPrint('GPS stream error: $error');
-
-              if (!completer.isCompleted) {
-                completer.complete(bestPosition);
-              }
+              if (!completer.isCompleted) completer.complete(bestPosition);
             },
           );
 
-      // Give the phone up to 30 seconds to provide a fresh GPS fix.
       Future.delayed(const Duration(seconds: 30), () {
-        if (!completer.isCompleted) {
-          completer.complete(bestPosition);
-        }
+        if (!completer.isCompleted) completer.complete(bestPosition);
       });
 
       final position = await completer.future;
@@ -259,10 +293,8 @@ class _ReportFormState extends State<ReportForm> {
         latitude: latitude,
         longitude: longitude,
       );
-
       if (googleResult != null && googleResult.trim().isNotEmpty) {
         debugPrint('Google Geocoding Barangay: $googleResult');
-
         return googleResult.trim();
       }
     } catch (e) {
@@ -274,10 +306,8 @@ class _ReportFormState extends State<ReportForm> {
         latitude: latitude,
         longitude: longitude,
       );
-
       if (osmResult != null && osmResult.trim().isNotEmpty) {
         debugPrint('OSM Geocoding Barangay: $osmResult');
-
         return osmResult.trim();
       }
     } catch (e) {
@@ -296,7 +326,6 @@ class _ReportFormState extends State<ReportForm> {
         latitude: latitude,
         longitude: longitude,
       );
-
       if (googleResult != null && googleResult.trim().isNotEmpty) {
         debugPrint('Google Full Address: $googleResult');
         return googleResult.trim();
@@ -310,7 +339,6 @@ class _ReportFormState extends State<ReportForm> {
         latitude: latitude,
         longitude: longitude,
       );
-
       if (osmResult != null && osmResult.trim().isNotEmpty) {
         debugPrint('OSM Full Address: $osmResult');
         return osmResult.trim();
@@ -321,10 +349,8 @@ class _ReportFormState extends State<ReportForm> {
 
     try {
       final places = await placemarkFromCoordinates(latitude, longitude);
-
       if (places.isNotEmpty) {
         final place = places.first;
-
         final parts = [
           place.street,
           place.subLocality,
@@ -336,7 +362,6 @@ class _ReportFormState extends State<ReportForm> {
         ].where((value) => value != null && value.trim().isNotEmpty);
 
         final address = parts.join(', ');
-
         if (address.isNotEmpty) {
           debugPrint('Device Full Address: $address');
           return address;
@@ -350,8 +375,7 @@ class _ReportFormState extends State<ReportForm> {
   }
 
   Future<void> _getLocation() async {
-    if (!mounted) return;
-
+    if (!mounted || _locating) return;
     setState(() => _locating = true);
 
     try {
@@ -365,7 +389,6 @@ class _ReportFormState extends State<ReportForm> {
             error: true,
           );
         }
-
         return;
       }
 
@@ -375,8 +398,7 @@ class _ReportFormState extends State<ReportForm> {
 
       debugPrint(
         'Selected GPS location: '
-        '$_lat, $_lng '
-        'accuracy=${_locationAccuracy}m',
+        '$_lat, $_lng accuracy=${_locationAccuracy}m',
       );
 
       final readableLocation = await _getReadableLocation(
@@ -392,113 +414,18 @@ class _ReportFormState extends State<ReportForm> {
       });
     } catch (e) {
       debugPrint('Location error: $e');
-
-      if (mounted) {
-        _show('Could not retrieve your location.', error: true);
-      }
+      if (mounted) _show('Could not retrieve your location.', error: true);
     } finally {
-      if (mounted) {
-        setState(() => _locating = false);
-      }
-    }
-  }
-
-  Future<void> _lookupDriver(String value) async {
-    final digits = value.trim();
-
-    if (digits.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _tricycleId = '';
-          _bodyError = '';
-        });
-      }
-
-      return;
-    }
-
-    if (!RegExp(r'^\d+$').hasMatch(digits)) {
-      if (mounted) {
-        setState(() {
-          _bodyError = 'Please enter numbers only.';
-          _tricycleId = '';
-        });
-      }
-
-      return;
-    }
-
-    final body = 'VGN-$digits';
-
-    if (mounted) {
-      setState(() {
-        _searching = true;
-        _bodyError = '';
-      });
-    }
-
-    try {
-      final db = Supabase.instance.client;
-
-      final tricycle = await db
-          .from('tricycles')
-          .select('tricycle_id, body_number')
-          .eq('body_number', body)
-          .maybeSingle();
-
-      if (tricycle == null) {
-        if (mounted) {
-          setState(() {
-            _bodyError = 'Body number not found in database.';
-            _tricycleId = '';
-          });
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _tricycleId = tricycle['tricycle_id'].toString();
-            _bodyError = '';
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint('Body number lookup error: $e');
-
-      if (mounted) {
-        setState(() {
-          _bodyError = 'Database lookup error.';
-          _tricycleId = '';
-        });
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _searching = false);
-      }
-    }
-  }
-
-  Future<void> _pickImage(ImageSource source) async {
-    try {
-      final file = await _picker.pickImage(source: source, imageQuality: 80);
-
-      if (file != null && mounted) {
-        setState(() {
-          _image = File(file.path);
-        });
-      }
-    } catch (e) {
-      _show('Error selecting image: $e', error: true);
+      if (mounted) setState(() => _locating = false);
     }
   }
 
   Future<void> _pickLocation() async {
-    if (mounted) {
-      setState(() => _locating = true);
-    }
+    if (!mounted || _locating) return;
+    setState(() => _locating = true);
 
     try {
       var permission = await Geolocator.checkPermission();
-
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
@@ -506,7 +433,6 @@ class _ReportFormState extends State<ReportForm> {
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
         _show('Location permission is required.', error: true);
-
         return;
       }
 
@@ -514,9 +440,16 @@ class _ReportFormState extends State<ReportForm> {
 
       final result = await Navigator.push<LatLng>(
         context,
-        MaterialPageRoute(builder: (_) => const IncidentLocationPicker()),
+        MaterialPageRoute(
+          builder: (_) => IncidentLocationPicker(
+            initial: (_lat != null && _lng != null)
+                ? LatLng(_lat!, _lng!)
+                : null,
+          ),
+        ),
       );
 
+      if (!mounted) return;
       if (result == null) return;
 
       _lat = result.latitude;
@@ -535,1032 +468,774 @@ class _ReportFormState extends State<ReportForm> {
       });
     } catch (e) {
       debugPrint('Location picker error: $e');
-
-      _show('Could not retrieve location: $e', error: true);
+      if (mounted) _show('Could not retrieve location: $e', error: true);
     } finally {
-      if (mounted) {
-        setState(() => _locating = false);
-      }
+      if (mounted) setState(() => _locating = false);
     }
   }
 
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) {
+  // ---------------------------------------------------------------------------
+  // Body number lookup (debounced)
+  // ---------------------------------------------------------------------------
+  void _onBodyNumberChanged(String value) {
+    _lookupDebounce?.cancel();
+
+    final digits = value.trim();
+
+    if (digits.isEmpty) {
+      setState(() {
+        _tricycleId = '';
+        _bodyError = '';
+      });
       return;
     }
 
+    if (!RegExp(r'^\d+$').hasMatch(digits)) {
+      setState(() {
+        _bodyError = 'Please enter numbers only.';
+        _tricycleId = '';
+      });
+      return;
+    }
+
+    setState(() {
+      _bodyError = '';
+      _tricycleId = '';
+    });
+
+    _lookupDebounce = Timer(const Duration(milliseconds: 500), () {
+      _lookupDriver(digits);
+    });
+  }
+
+  Future<void> _lookupDriver(String value) async {
+    final digits = value.trim();
+    if (digits.isEmpty) return;
+
+    final body = 'VGN-$digits';
+
+    if (mounted) {
+      setState(() {
+        _searching = true;
+        _bodyError = '';
+      });
+    }
+
+    try {
+      final db = Supabase.instance.client;
+      final tricycle = await db
+          .from('tricycles')
+          .select('tricycle_id, body_number')
+          .eq('body_number', body)
+          .maybeSingle();
+
+      if (!mounted) return;
+
+      if (tricycle == null) {
+        setState(() {
+          _bodyError = 'Body number not found in database.';
+          _tricycleId = '';
+        });
+      } else {
+        setState(() {
+          _tricycleId = tricycle['tricycle_id'].toString();
+          _bodyError = '';
+        });
+      }
+    } catch (e) {
+      debugPrint('Body number lookup error: $e');
+      if (!mounted) return;
+      setState(() {
+        _bodyError = 'Database lookup error.';
+        _tricycleId = '';
+      });
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Image
+  // ---------------------------------------------------------------------------
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final file = await _picker.pickImage(source: source, imageQuality: 80);
+      if (file != null && mounted) {
+        setState(() => _image = File(file.path));
+      }
+    } catch (e) {
+      _show('Error selecting image: $e', error: true);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Submit
+  // ---------------------------------------------------------------------------
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+
     if (_bodyError.isNotEmpty || _tricycleId.isEmpty) {
       _show('Please enter a valid verified body number.', error: true);
-
       return;
     }
 
     if (!_declarationAccepted) {
       _show('Please confirm the declaration before submitting.', error: true);
-
       return;
     }
 
     final db = Supabase.instance.client;
     final user = db.auth.currentUser;
-
     if (user == null) {
       _show('You must be logged in.', error: true);
-
       return;
     }
 
     if (_lat == null || _lng == null) {
       _show('Please wait for your location to be detected.', error: true);
-
       return;
     }
 
     if (_name.text.trim().isEmpty || _contact.text.trim().isEmpty) {
       await _loadProfile();
-
+      if (!mounted) return;
       if (_name.text.trim().isEmpty || _contact.text.trim().isEmpty) {
+        _show('Your profile is incomplete. Please update it.', error: true);
         return;
       }
     }
 
-    if (mounted) {
-      setState(() => _uploading = true);
+    if (_reportType == ReportType.lateReport &&
+        _lateReason.text.trim().isEmpty) {
+      _show('Please provide a reason for the late report.', error: true);
+      return;
     }
+
+    if (_selectedItem == 'Others' && _otherReason.text.trim().isEmpty) {
+      _show('Please specify the report type.', error: true);
+      return;
+    }
+
+    setState(() => _uploading = true);
 
     try {
       String? imageUrl;
 
       if (_image != null) {
-        final extension = _image!.path.split('.').last;
-
+        final extension = _image!.path.split('.').last.toLowerCase();
         final path =
-            'evidence/${user.id}_${DateTime.now().millisecondsSinceEpoch}.$extension';
+            'evidence/${user.id}/'
+            '${DateTime.now().millisecondsSinceEpoch}.$extension';
 
         await db.storage
-            .from('evidence')
+            .from('report_evidence')
             .upload(
               path,
               _image!,
-              fileOptions: const FileOptions(
-                cacheControl: '3600',
-                upsert: true,
-              ),
+              fileOptions: const FileOptions(upsert: false),
             );
 
-        imageUrl = db.storage.from('evidence').getPublicUrl(path);
+        imageUrl = db.storage.from('report_evidence').getPublicUrl(path);
       }
 
-      await db.from('reports').insert({
-        'user_id': user.id,
+      final barangay = await _getBarangay(_lat!, _lng!);
 
-        'body_number': 'VGN-${_body.text.trim()}',
-
+      final payload = <String, dynamic>{
+        'commuter_id': user.id,
         'tricycle_id': _tricycleId,
-
-        'reported_driver_name': _driver.text.trim().isEmpty
-            ? null
-            : _driver.text.trim(),
-
-        'violation': _selectedItem,
-
-        'location': _location.text.trim(),
-
+        'report_type': _selectedItem == 'Others'
+            ? 'Others: ${_otherReason.text.trim()}'
+            : _selectedItem,
+        'description': _driver.text.trim().isEmpty ? null : _driver.text.trim(),
+        'location_text': _location.text.trim(),
+        'barangay': barangay,
         'latitude': _lat,
-
         'longitude': _lng,
-
-        'incidentdate': _date.text,
-
-        'incidenttime': _time.text,
-
+        'location_accuracy': _locationAccuracy,
         'evidence_url': imageUrl,
-
-        'status': 'Pending',
-
-        'complainantname': _name.text.trim(),
-
-        'address': _address.text.trim().isEmpty ? null : _address.text.trim(),
-
-        'contact': _contact.text.trim(),
-
-        'report_type': _reportType == ReportType.reportNow
-            ? 'Report Now'
-            : 'Late Report',
-
-        'late_report_reason': _reportType == ReportType.lateReport
+        'reported_at': _reportType == ReportType.lateReport
+            ? '${_date.text} ${_time.text}'
+            : DateTime.now().toUtc().toIso8601String(),
+        'late_reason': _reportType == ReportType.lateReport
             ? _lateReason.text.trim()
             : null,
-      });
+        'status': 'pending',
+      };
 
-      try {
-        await NotificationService.sendPushToRole(
-          role: 'admin_staff',
-          title: 'New Report Received',
+      final inserted = await db
+          .from('reports')
+          .insert(payload)
+          .select('id')
+          .maybeSingle();
+
+      final reportId = inserted?['id']?.toString();
+
+      // ── Notifications (best-effort, non-blocking) ──────────────────────────
+      unawaited(
+        NotificationService.sendPush(
+          userId: user.id,
+          title: 'Report Submitted',
           message:
-              'A new ${_selectedItem ?? 'offense'} report was submitted for body number VGN-${_body.text.trim()}.',
-          type: 'report',
-        );
-      } catch (e) {
-        debugPrint('Notification error: $e');
-      }
-
-      if (!mounted) return;
-
-      await showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => AlertDialog(
-          title: const Text('Report Submitted'),
-          content: const Text(
-            'Your report was submitted successfully and safely logged.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
+              'Your report'
+              '${reportId != null ? ' #$reportId' : ''} '
+              'has been received and is pending review. Thank you!',
+          type: 'report_submitted',
+        ).catchError((e) {
+          debugPrint('Notification error: $e');
+        }),
       );
 
-      _reset();
+      unawaited(
+        NotificationService.sendPushToRole(
+          role: 'admin', // ← match the role value used in your DB
+          title: 'New Report Filed',
+          message:
+              'A new violation report'
+              '${reportId != null ? ' #$reportId' : ''} '
+              'was submitted and is pending review.',
+          type: 'new_report',
+        ).catchError((e) {
+          debugPrint('Notification error (admin): $e');
+        }),
+      );
+
+      if (!mounted) return;
+      _show('Report submitted successfully. Thank you!');
+
+      setState(() {
+        _body.clear();
+        _driver.clear();
+        _tricycleId = '';
+        _bodyError = '';
+        _selectedItem = null;
+        _image = null;
+        _declarationAccepted = false;
+        _lateReason.clear();
+        _otherReason.clear();
+        _reportType = ReportType.reportNow;
+      });
       _setDateTime();
-      _getLocation();
+      if (mounted) await _getLocation();
     } catch (e) {
-      _show('Submission Error: $e', error: true);
+      debugPrint('Submit error: $e');
+      if (!mounted) return;
+      _show('Failed to submit report: $e', error: true);
     } finally {
-      if (mounted) {
-        setState(() => _uploading = false);
-      }
+      if (mounted) setState(() => _uploading = false);
     }
   }
 
-  void _reset() {
-    _formKey.currentState?.reset();
-
-    setState(() {
-      _selectedItem = null;
-
-      _tricycleId = '';
-      _bodyError = '';
-
-      _image = null;
-
-      _body.clear();
-      _driver.clear();
-      _location.clear();
-
-      _date.clear();
-      _time.clear();
-
-      _lateReason.clear();
-
-      _lat = null;
-      _lng = null;
-      _locationAccuracy = null;
-
-      _reportType = ReportType.reportNow;
-      _declarationAccepted = false;
-    });
-  }
-
-  Future<void> _pickDate() async {
-    if (_reportType == ReportType.reportNow) {
-      return;
-    }
-
-    final date = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime(2025),
-      lastDate: DateTime.now(),
-    );
-
-    if (date != null && mounted) {
-      setState(() {
-        _date.text = DateFormat('yyyy-MM-dd').format(date);
-      });
-    }
-  }
-
-  Future<void> _pickTime() async {
-    if (_reportType == ReportType.reportNow) {
-      return;
-    }
-
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.now(),
-    );
-
-    if (time != null && mounted) {
-      setState(() {
-        _time.text = time.format(context);
-      });
-    }
-  }
-
-  void _show(String text, {bool error = false}) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(text),
-        backgroundColor: error ? Colors.redAccent : null,
-      ),
-    );
-  }
-
-  InputDecoration _input(
-    String label,
-    IconData icon, {
-    String? hint,
-    Widget? suffix,
-  }) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      prefixIcon: Icon(icon, color: Colors.green),
-      suffixIcon: suffix,
-      filled: true,
-      fillColor: Colors.white,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Colors.green, width: 2),
-      ),
-    );
-  }
-
-  Widget _header(String text, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12, top: 4),
-      child: Row(
-        children: [
-          Icon(icon, color: Colors.green),
-          const SizedBox(width: 8),
-          Text(
-            text,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    for (final controller in [
-      _date,
-      _time,
-      _driver,
-      _location,
-      _name,
-      _address,
-      _contact,
-      _body,
-      _lateReason,
-    ]) {
-      controller.dispose();
-    }
-
-    super.dispose();
-  }
-
+  // ---------------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (_loadingProfile) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA),
-
       appBar: AppBar(
-        title: const Text(
-          'RTODA Public Complaint Desk',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-        ),
+        title: const Text('Report a Violation'),
         centerTitle: true,
-        backgroundColor: Colors.green,
       ),
+      body: SafeArea(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              if (_uploading) const LinearProgressIndicator(),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    16,
+                    16,
+                    24 + MediaQuery.of(context).viewInsets.bottom,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Report type
+                      SegmentedButton<ReportType>(
+                        segments: const [
+                          ButtonSegment(
+                            value: ReportType.reportNow,
+                            label: Text('Report Now'),
+                            icon: Icon(Icons.flash_on),
+                          ),
+                          ButtonSegment(
+                            value: ReportType.lateReport,
+                            label: Text('Late Report'),
+                            icon: Icon(Icons.history),
+                          ),
+                        ],
+                        selected: {_reportType},
+                        onSelectionChanged: (s) =>
+                            setState(() => _reportType = s.first),
+                      ),
+                      const SizedBox(height: 16),
 
-      body: _uploading
-          ? const Center(child: CircularProgressIndicator(color: Colors.green))
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  children: [
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          children: [
-                            _header('Report Type', Icons.assignment),
-
-                            RadioListTile<ReportType>(
-                              title: const Text('Report Now'),
-                              subtitle: const Text(
-                                'Use current date, time, and location.',
-                              ),
-                              value: ReportType.reportNow,
-                              groupValue: _reportType,
-                              onChanged: (value) async {
-                                if (value == null) {
-                                  return;
-                                }
-
-                                setState(() {
-                                  _reportType = value;
-                                });
-
-                                _lateReason.clear();
-
-                                _setDateTime();
-
-                                await _getLocation();
-                              },
-                            ),
-
-                            RadioListTile<ReportType>(
-                              title: const Text('Late Report'),
-                              subtitle: const Text(
-                                'Report an earlier incident.',
-                              ),
-                              value: ReportType.lateReport,
-                              groupValue: _reportType,
-                              onChanged: (value) {
-                                if (value == null) {
-                                  return;
-                                }
-
-                                setState(() {
-                                  _reportType = value;
-
-                                  _date.clear();
-                                  _time.clear();
-                                  _location.clear();
-                                  _lat = null;
-                                  _lng = null;
-                                  _locationAccuracy = null;
-                                });
-                              },
-                            ),
-
-                            if (_reportType == ReportType.lateReport)
-                              TextFormField(
-                                controller: _lateReason,
-                                maxLines: 3,
-                                decoration: _input(
-                                  'Reason for Late Report',
-                                  Icons.edit_note,
-                                ),
-                                validator: (value) {
-                                  if (value == null || value.trim().isEmpty) {
-                                    return 'Please provide a reason.';
-                                  }
-
-                                  return null;
-                                },
-                              ),
-
-                            const Divider(height: 30),
-
-                            _header('Incident Details', Icons.gavel),
-
-                            TextFormField(
-                              controller: _body,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                                LengthLimitingTextInputFormatter(3),
-                              ],
-                              decoration: _input(
-                                'Tricycle Body Number',
-                                Icons.local_taxi,
-                                hint: 'e.g. 123',
-                                suffix: _searching
-                                    ? const Padding(
-                                        padding: EdgeInsets.all(12),
-                                        child: SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        ),
-                                      )
-                                    : null,
-                              ).copyWith(prefixText: 'VGN-'),
-                              onChanged: _lookupDriver,
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'Please enter body number';
-                                }
-
-                                if (_bodyError.isNotEmpty) {
-                                  return _bodyError;
-                                }
-
-                                return null;
-                              },
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            DropdownButtonFormField<String>(
-                              value: _selectedItem,
-                              decoration: _input(
-                                'Nature of Complaint',
-                                Icons.report,
-                              ),
-                              items: items
-                                  .map(
-                                    (item) => DropdownMenuItem(
-                                      value: item,
-                                      child: Text(item),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (value) {
-                                setState(() {
-                                  _selectedItem = value;
-                                });
-                              },
-                              validator: (value) {
-                                if (value == null) {
-                                  return 'Please select complaint';
-                                }
-
-                                return null;
-                              },
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            TextFormField(
-                              controller: _driver,
-                              textCapitalization: TextCapitalization.words,
-                              decoration: _input(
-                                'Driver Name (Optional)',
-                                Icons.person_outline,
-                                hint: 'Enter if you know the driver',
-                              ),
-                            ),
-
-                            const SizedBox(height: 6),
-
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Padding(
-                                padding: const EdgeInsets.only(left: 4),
-                                child: Text(
-                                  'Only enter the driver name if you know it.',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey.shade600,
-                                  ),
-                                ),
-                              ),
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            TextFormField(
-                              controller: _location,
+                      // Date / Time
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _date,
                               readOnly: true,
-                              onTap: _reportType == ReportType.lateReport
-                                  ? _pickLocation
-                                  : null,
-                              decoration: _input(
-                                'Incident Location',
-                                Icons.location_on,
-                                hint: 'Tap to pinpoint location',
-                                suffix: _locating
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: Padding(
-                                          padding: EdgeInsets.all(12),
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.green,
-                                          ),
-                                        ),
-                                      )
-                                    : const Icon(
-                                        Icons.map,
-                                        color: Colors.green,
-                                      ),
+                              decoration: const InputDecoration(
+                                labelText: 'Date',
+                                prefixIcon: Icon(Icons.calendar_today_outlined),
+                                border: OutlineInputBorder(),
+                                filled: true,
                               ),
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'Please pinpoint location';
-                                }
-
-                                return null;
-                              },
                             ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _time,
+                              readOnly: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Time',
+                                prefixIcon: Icon(Icons.access_time),
+                                border: OutlineInputBorder(),
+                                filled: true,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
 
-                            if (_locationAccuracy != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 6, left: 4),
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    'GPS accuracy: ${_locationAccuracy!.toStringAsFixed(1)} meters',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade600,
+                      // Late reason
+                      if (_reportType == ReportType.lateReport) ...[
+                        TextFormField(
+                          controller: _lateReason,
+                          maxLines: 3,
+                          decoration: const InputDecoration(
+                            labelText: 'Reason for late report',
+                            hintText:
+                                'Explain why this report is being filed late',
+                            prefixIcon: Icon(Icons.info_outline),
+                            border: OutlineInputBorder(),
+                          ),
+                          validator: (v) =>
+                              _reportType == ReportType.lateReport &&
+                                  (v == null || v.trim().isEmpty)
+                              ? 'Please provide a reason'
+                              : null,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+
+                      // Body number
+                      TextFormField(
+                        controller: _body,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
+                        decoration: InputDecoration(
+                          labelText: 'Body Number',
+                          hintText: 'e.g., 1234 (auto-prefixed with VGN-)',
+                          prefixIcon: const Icon(
+                            Icons.confirmation_number_outlined,
+                          ),
+                          suffixIcon: _searching
+                              ? const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
                                     ),
                                   ),
-                                ),
+                                )
+                              : _tricycleId.isNotEmpty
+                              ? const Icon(
+                                  Icons.check_circle,
+                                  color: Colors.green,
+                                )
+                              : null,
+                          errorText: _bodyError.isEmpty ? null : _bodyError,
+                          helperText: _tricycleId.isNotEmpty
+                              ? '✓ Verified body number'
+                              : null,
+                          border: const OutlineInputBorder(),
+                        ),
+                        onChanged: _onBodyNumberChanged,
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'Body number is required';
+                          }
+                          if (!RegExp(r'^\d+$').hasMatch(v.trim())) {
+                            return 'Numbers only';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Violation type
+                      DropdownButtonFormField<String>(
+                        initialValue: _selectedItem,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Violation Type',
+                          prefixIcon: Icon(Icons.report_problem_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        items: items
+                            .map(
+                              (e) => DropdownMenuItem(
+                                value: e,
+                                child: Text(e, overflow: TextOverflow.ellipsis),
                               ),
+                            )
+                            .toList(),
+                        onChanged: (v) => setState(() => _selectedItem = v),
+                        validator: (v) =>
+                            v == null ? 'Please select a violation type' : null,
+                      ),
+                      const SizedBox(height: 16),
 
-                            const SizedBox(height: 16),
+                      // Other reason
+                      if (_selectedItem == 'Others') ...[
+                        TextFormField(
+                          controller: _otherReason,
+                          maxLines: 2,
+                          decoration: const InputDecoration(
+                            labelText: 'Please specify',
+                            prefixIcon: Icon(Icons.edit_note),
+                            border: OutlineInputBorder(),
+                          ),
+                          validator: (v) =>
+                              _selectedItem == 'Others' &&
+                                  (v == null || v.trim().isEmpty)
+                              ? 'Please specify the violation'
+                              : null,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
 
-                            Row(
-                              children: [
-                                _DateField(
-                                  controller: _date,
-                                  onTap: _pickDate,
-                                  label: 'Incident Date',
+                      // Description
+                      TextFormField(
+                        controller: _driver,
+                        maxLines: 4,
+                        decoration: const InputDecoration(
+                          labelText: 'Description (optional)',
+                          hintText:
+                              'Describe what happened (driver appearance, '
+                              'plate, etc.)',
+                          prefixIcon: Icon(Icons.description_outlined),
+                          border: OutlineInputBorder(),
+                          alignLabelWithHint: true,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Location
+                      TextFormField(
+                        controller: _location,
+                        readOnly: true,
+                        maxLines: 2,
+                        minLines: 1,
+                        decoration: InputDecoration(
+                          labelText: 'Location',
+                          prefixIcon: const Icon(Icons.location_on_outlined),
+                          suffixIcon: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (_locating)
+                                const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                )
+                              else ...[
+                                IconButton(
+                                  tooltip: 'Detect my location',
+                                  icon: const Icon(Icons.my_location),
+                                  onPressed: _getLocation,
                                 ),
-
-                                const SizedBox(width: 12),
-
-                                _DateField(
-                                  controller: _time,
-                                  onTap: _pickTime,
-                                  label: 'Incident Time',
-                                  icon: Icons.access_time,
+                                IconButton(
+                                  tooltip: 'Pick on map',
+                                  icon: const Icon(Icons.map_outlined),
+                                  onPressed: _pickLocation,
                                 ),
                               ],
-                            ),
-                          ],
+                            ],
+                          ),
+                          helperText: _locationAccuracy != null
+                              ? 'Accuracy: '
+                                    '${_locationAccuracy!.toStringAsFixed(0)} m'
+                              : null,
+                          border: const OutlineInputBorder(),
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 16),
 
-                    const SizedBox(height: 16),
+                      // Reporter info
+                      TextFormField(
+                        controller: _name,
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Your Name',
+                          prefixIcon: Icon(Icons.person_outline),
+                          border: OutlineInputBorder(),
+                          filled: true,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _contact,
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Contact Number',
+                          prefixIcon: Icon(Icons.phone_outlined),
+                          border: OutlineInputBorder(),
+                          filled: true,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
 
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _header(
-                              'Evidence Attachment (Optional)',
-                              Icons.camera_alt,
-                            ),
-
-                            const Text(
-                              'Add a photo of the incident or fare receipt.',
-                              style: TextStyle(color: Colors.black54),
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            if (_image == null)
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: OutlinedButton.icon(
-                                      onPressed: () =>
-                                          _pickImage(ImageSource.camera),
-                                      icon: const Icon(
-                                        Icons.camera_alt,
-                                        color: Colors.green,
-                                      ),
-                                      label: const Text('Camera'),
-                                    ),
-                                  ),
-
-                                  const SizedBox(width: 12),
-
-                                  Expanded(
-                                    child: OutlinedButton.icon(
-                                      onPressed: () =>
-                                          _pickImage(ImageSource.gallery),
-                                      icon: const Icon(
-                                        Icons.image,
-                                        color: Colors.green,
-                                      ),
-                                      label: const Text('Gallery'),
-                                    ),
-                                  ),
-                                ],
-                              )
-                            else
-                              Stack(
-                                children: [
-                                  Container(
-                                    height: 200,
-                                    width: double.infinity,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(12),
-                                      image: DecorationImage(
-                                        image: FileImage(_image!),
-                                        fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                  ),
-
-                                  Positioned(
-                                    top: 8,
-                                    right: 8,
-                                    child: CircleAvatar(
-                                      backgroundColor: Colors.black54,
-                                      child: IconButton(
-                                        onPressed: () {
-                                          setState(() => _image = null);
-                                        },
-                                        icon: const Icon(
-                                          Icons.close,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                      // Image
+                      Card(
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Evidence Photo (optional)',
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          children: [
-                            _header(
-                              'Complainant Information',
-                              Icons.assignment_ind,
-                            ),
-
-                            if (_loadingProfile)
-                              const Padding(
-                                padding: EdgeInsets.only(bottom: 16),
-                                child: Row(
+                              const SizedBox(height: 8),
+                              if (_image != null) ...[
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.file(
+                                    _image!,
+                                    height: 180,
+                                    width: double.infinity,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
                                   children: [
-                                    SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.green,
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        icon: const Icon(Icons.swap_horiz),
+                                        label: const Text('Replace'),
+                                        onPressed: _uploading
+                                            ? null
+                                            : () => _pickImage(
+                                                ImageSource.camera,
+                                              ),
                                       ),
                                     ),
-                                    SizedBox(width: 10),
-                                    Text('Loading your profile...'),
+                                    const SizedBox(width: 8),
+                                    IconButton(
+                                      tooltip: 'Remove photo',
+                                      icon: const Icon(
+                                        Icons.delete_outline,
+                                        color: Colors.red,
+                                      ),
+                                      onPressed: _uploading
+                                          ? null
+                                          : () => setState(() => _image = null),
+                                    ),
                                   ],
                                 ),
-                              ),
-
-                            TextFormField(
-                              controller: _name,
-                              readOnly: true,
-                              decoration: _input(
-                                'Full Name',
-                                Icons.badge,
-                                hint: 'Automatically from your account',
-                              ),
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'Name could not be loaded.';
-                                }
-
-                                return null;
-                              },
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            TextFormField(
-                              controller: _address,
-                              decoration: _input(
-                                'Home Address (Optional)',
-                                Icons.home,
-                                hint: 'Optional',
-                              ),
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            TextFormField(
-                              controller: _contact,
-                              readOnly: true,
-                              keyboardType: TextInputType.phone,
-                              decoration: _input(
-                                'Contact Number',
-                                Icons.phone,
-                                hint: 'Automatically from your account',
-                              ),
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'Contact number could not be loaded.';
-                                }
-
-                                return null;
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _header('PART IV - DECLARATION', Icons.fact_check),
-
-                            const Text(
-                              'Upon submitting this form, I hereby certify that the information provided is true and correct to the best of my knowledge.',
-                              style: TextStyle(
-                                fontSize: 14,
-                                height: 1.5,
-                                fontStyle: FontStyle.italic,
-                              ),
-                            ),
-
-                            const SizedBox(height: 12),
-
-                            Row(
-                              children: [
-                                Checkbox(
-                                  value: _declarationAccepted,
-                                  activeColor: Colors.green,
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _declarationAccepted = value ?? false;
-                                    });
-                                  },
+                              ] else
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        icon: const Icon(
+                                          Icons.camera_alt_outlined,
+                                        ),
+                                        label: const Text('Camera'),
+                                        onPressed: _uploading
+                                            ? null
+                                            : () => _pickImage(
+                                                ImageSource.camera,
+                                              ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        icon: const Icon(
+                                          Icons.photo_library_outlined,
+                                        ),
+                                        label: const Text('Gallery'),
+                                        onPressed: _uploading
+                                            ? null
+                                            : () => _pickImage(
+                                                ImageSource.gallery,
+                                              ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
 
-                                const Text(
-                                  'YES',
-                                  style: TextStyle(fontWeight: FontWeight.w600),
-                                ),
-                              ],
+                      // Declaration
+                      CheckboxListTile(
+                        value: _declarationAccepted,
+                        onChanged: _uploading
+                            ? null
+                            : (v) => setState(
+                                () => _declarationAccepted = v ?? false,
+                              ),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'I declare that the information provided is true '
+                          'and correct. I understand that false reports may '
+                          'result in account suspension.',
+                          style: TextStyle(fontSize: 13),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Submit
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton.icon(
+                          onPressed: _canSubmit ? _submit : null,
+                          icon: _uploading
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.send),
+                          label: Text(
+                            _uploading ? 'Submitting…' : 'Submit Report',
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: theme.colorScheme.primary,
+                            foregroundColor: theme.colorScheme.onPrimary,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                          ],
+                          ),
                         ),
                       ),
-                    ),
-
-                    const SizedBox(height: 30),
-
-                    ElevatedButton.icon(
-                      onPressed: _loadingProfile || _uploading ? null : _submit,
-                      icon: const Icon(Icons.send, color: Colors.white),
-                      label: const Text(
-                        'SUBMIT OFFENSE REPORT',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size(double.infinity, 56),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-    );
-  }
-}
-
-class _DateField extends StatelessWidget {
-  final TextEditingController controller;
-  final VoidCallback onTap;
-  final String label;
-  final IconData icon;
-
-  const _DateField({
-    required this.controller,
-    required this.onTap,
-    required this.label,
-    this.icon = Icons.calendar_today,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: TextFormField(
-        controller: controller,
-        readOnly: true,
-        onTap: onTap,
-        decoration: InputDecoration(
-          labelText: label,
-          prefixIcon: Icon(icon, color: Colors.green),
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ],
+          ),
         ),
-        validator: (value) {
-          if (value == null || value.trim().isEmpty) {
-            return 'Required';
-          }
-
-          return null;
-        },
       ),
     );
   }
 }
 
+// ---------------------------------------------------------------------------
+// Minimal map picker
+// ---------------------------------------------------------------------------
 class IncidentLocationPicker extends StatefulWidget {
-  const IncidentLocationPicker({super.key});
+  const IncidentLocationPicker({super.key, this.initial});
+
+  final LatLng? initial;
 
   @override
   State<IncidentLocationPicker> createState() => _IncidentLocationPickerState();
 }
 
 class _IncidentLocationPickerState extends State<IncidentLocationPicker> {
-  final _map = MapController();
-
-  LatLng _center = const LatLng(17.5744, 120.3893);
-
-  bool _loading = true;
+  late final MapController _mapController = MapController();
+  LatLng? _picked;
 
   @override
   void initState() {
     super.initState();
-
-    _getPosition();
-  }
-
-  Future<void> _getPosition() async {
-    try {
-      if (!await Geolocator.isLocationServiceEnabled()) {
-        if (mounted) {
-          setState(() => _loading = false);
-        }
-
-        return;
-      }
-
-      var permission = await Geolocator.checkPermission();
-
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        if (mounted) {
-          setState(() => _loading = false);
-        }
-
-        return;
-      }
-
-      Position? bestPosition;
-
-      for (var attempt = 0; attempt < 3; attempt++) {
-        try {
-          final position = await Geolocator.getCurrentPosition(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.bestForNavigation,
-              distanceFilter: 0,
-            ),
-            timeLimit: const Duration(seconds: 12),
-          );
-
-          if (bestPosition == null ||
-              position.accuracy < bestPosition.accuracy) {
-            bestPosition = position;
-          }
-
-          debugPrint(
-            'Map GPS attempt ${attempt + 1}: '
-            '${position.latitude}, ${position.longitude} '
-            'accuracy=${position.accuracy}m',
-          );
-
-          if (position.accuracy <= 20) {
-            break;
-          }
-        } catch (e) {
-          debugPrint('Map GPS attempt ${attempt + 1} failed: $e');
-        }
-
-        if (attempt < 2) {
-          await Future.delayed(const Duration(milliseconds: 700));
-        }
-      }
-
-      if (!mounted) return;
-
-      setState(() {
-        if (bestPosition != null) {
-          _center = LatLng(bestPosition!.latitude, bestPosition.longitude);
-        }
-
-        _loading = false;
-      });
-    } catch (e) {
-      debugPrint('Map location error: $e');
-
-      if (mounted) {
-        setState(() => _loading = false);
-      }
-    }
+    _picked = widget.initial;
   }
 
   @override
   Widget build(BuildContext context) {
+    final center = _picked ?? const LatLng(14.5995, 120.9842); // Manila default
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Pinpoint Incident Location',
-          style: TextStyle(color: Colors.white),
-        ),
-        backgroundColor: Colors.green,
-        iconTheme: const IconThemeData(color: Colors.white),
+        title: const Text('Pick Incident Location'),
+        actions: [
+          IconButton(
+            tooltip: 'Use this location',
+            icon: const Icon(Icons.check),
+            onPressed: _picked == null
+                ? null
+                : () => Navigator.pop(context, _picked),
+          ),
+        ],
       ),
-
-      body: _loading
-          ? const Center(child: CircularProgressIndicator(color: Colors.green))
-          : Stack(
-              children: [
-                FlutterMap(
-                  mapController: _map,
-                  options: MapOptions(
-                    initialCenter: _center,
-                    initialZoom: 16.5,
-                    onPositionChanged: (position, _) {
-                      if (position.center != null) {
-                        _center = position.center!;
-                      }
-                    },
-                  ),
-                  children: [
-                    TileLayer(
-                      urlTemplate:
-                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.rtoda.complaint_desk_app',
-                    ),
-                  ],
-                ),
-
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.only(bottom: 36),
-                    child: Icon(
-                      Icons.location_pin,
-                      size: 50,
-                      color: Colors.redAccent,
-                    ),
-                  ),
-                ),
-
-                Positioned(
-                  bottom: 24,
-                  left: 24,
-                  right: 24,
-                  child: ElevatedButton.icon(
-                    onPressed: () => Navigator.pop(context, _center),
-                    icon: const Icon(
-                      Icons.check_circle_outline,
-                      color: Colors.white,
-                    ),
-                    label: const Text(
-                      'CONFIRM INCIDENT LOCATION',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
+      body: FlutterMap(
+        mapController: _mapController,
+        options: MapOptions(
+          initialCenter: center,
+          initialZoom: 16,
+          onTap: (_, point) => setState(() => _picked = point),
+        ),
+        children: [
+          TileLayer(
+            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            userAgentPackageName: 'com.example.app',
+          ),
+          if (_picked != null)
+            MarkerLayer(
+              markers: [
+                Marker(
+                  point: _picked!,
+                  width: 40,
+                  height: 40,
+                  child: const Icon(
+                    Icons.location_on,
+                    color: Colors.red,
+                    size: 40,
                   ),
                 ),
               ],
             ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _picked == null
+            ? null
+            : () => Navigator.pop(context, _picked),
+        icon: const Icon(Icons.check),
+        label: const Text('Use Location'),
+      ),
     );
   }
 }

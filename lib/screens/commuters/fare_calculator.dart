@@ -31,6 +31,7 @@ class _FareCalculatorScreenState extends State<FareCalculatorScreen> {
   bool isSearching = false;
   bool discounted = false;
   bool isSingleOccupant = true;
+
   bool get _isNightTime {
     final currentHour = DateTime.now().hour;
     return currentHour >= 18 || currentHour < 6;
@@ -49,7 +50,7 @@ class _FareCalculatorScreenState extends State<FareCalculatorScreen> {
           padding: const EdgeInsets.only(
             left: 60,
             right: 60,
-            top: 120,
+            top: 140,
             bottom: 250,
           ),
         ),
@@ -123,7 +124,10 @@ class _FareCalculatorScreenState extends State<FareCalculatorScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("RTODA Fare Calculator")),
+      appBar: AppBar(
+        title: const Text("Fare Calculator"),
+        centerTitle: true,
+      ),
       body: SafeArea(
         child: Stack(
           children: [
@@ -140,33 +144,26 @@ class _FareCalculatorScreenState extends State<FareCalculatorScreen> {
               ),
             ),
 
-            // 2. Search Card
+            // 2. Responsive Search Card Layer
             Positioned(
               top: 12,
               left: 16,
               right: 16,
-              child: Material(
-                elevation: 8,
-                borderRadius: BorderRadius.circular(22),
-                child: Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(22),
-                    boxShadow: const [
-                      BoxShadow(
-                        blurRadius: 18,
-                        offset: Offset(0, 8),
-                        color: Colors.black12,
-                      ),
-                    ],
-                  ),
+              child: Card(
+                elevation: 2,
+                shadowColor: Colors.black12,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: BorderSide(color: Colors.grey.shade200),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       LocationSearch(
                         label: "Pickup",
-                        icon: Icons.my_location,
+                        icon: Icons.my_location_rounded,
                         allowCurrentLocation: true,
                         onSearchStarted: () =>
                             setState(() => isSearching = true),
@@ -185,12 +182,10 @@ class _FareCalculatorScreenState extends State<FareCalculatorScreen> {
                           }
                         },
                       ),
-
-                      const SizedBox(height: 10),
-
+                      const SizedBox(height: 8),
                       LocationSearch(
                         label: "Destination",
-                        icon: Icons.location_on,
+                        icon: Icons.location_on_rounded,
                         allowCurrentLocation: true,
                         onSearchStarted: () =>
                             setState(() => isSearching = true),
@@ -218,11 +213,11 @@ class _FareCalculatorScreenState extends State<FareCalculatorScreen> {
             // 3. Draggable Route Information Sheet
             if (pickup != null && destination != null && !isSearching)
               DraggableScrollableSheet(
-                initialChildSize: 0.13,
-                minChildSize: 0.11,
+                initialChildSize: 0.14,
+                minChildSize: 0.12,
                 maxChildSize: 0.65,
                 snap: true,
-                snapSizes: const [0.13, 0.35, 0.65],
+                snapSizes: const [0.14, 0.35, 0.65],
                 builder: (context, scrollController) {
                   return RouteInformationCard(
                     controller: scrollController,
@@ -238,7 +233,6 @@ class _FareCalculatorScreenState extends State<FareCalculatorScreen> {
                     isSingleOccupant: isSingleOccupant,
                     discounted: discounted,
                     nightFare: _isNightTime,
-
                     onPassengerChanged: (value) async {
                       setState(() {
                         isSingleOccupant = value;
@@ -246,7 +240,6 @@ class _FareCalculatorScreenState extends State<FareCalculatorScreen> {
 
                       await _calculateOfficialFare();
                     },
-
                     onDiscountChanged: (value) async {
                       setState(() {
                         discounted = value;

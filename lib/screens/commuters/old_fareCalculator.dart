@@ -7,6 +7,8 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class ViganFreeMapScreen extends StatefulWidget {
+  const ViganFreeMapScreen({super.key});
+
   @override
   _ViganFreeMapScreenState createState() => _ViganFreeMapScreenState();
 }
@@ -106,7 +108,7 @@ class _ViganFreeMapScreenState extends State<ViganFreeMapScreen> {
         .select('zone_category')
         .eq('village_name', villageName);
 
-    if (response != null && response.isNotEmpty) {
+    if (response.isNotEmpty) {
       return response[0]['zone_category'] as String?;
     }
     return null;
@@ -118,7 +120,7 @@ class _ViganFreeMapScreenState extends State<ViganFreeMapScreen> {
         .select()
         .eq('zone_category', zoneCategory);
 
-    if (response != null && response.isNotEmpty) {
+    if (response.isNotEmpty) {
       return response[0]; // assuming response is a list of maps
     }
     return null;
@@ -530,9 +532,9 @@ class _ViganFreeMapScreenState extends State<ViganFreeMapScreen> {
   }
 
   void _openSubmitReportFormSheet() {
-    final TextEditingController _bodyNumberController = TextEditingController();
-    final TextEditingController _commentsController = TextEditingController();
-    String _selectedViolationType = "Overpricing / Overcharging";
+    final TextEditingController bodyNumberController = TextEditingController();
+    final TextEditingController commentsController = TextEditingController();
+    String selectedViolationType = "Overpricing / Overcharging";
 
     showModalBottomSheet(
       context: context,
@@ -630,7 +632,7 @@ class _ViganFreeMapScreenState extends State<ViganFreeMapScreen> {
               ),
               const SizedBox(height: 6),
               TextField(
-                controller: _bodyNumberController,
+                controller: bodyNumberController,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
                   hintText: "e.g., 1432",
@@ -654,7 +656,7 @@ class _ViganFreeMapScreenState extends State<ViganFreeMapScreen> {
               ),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
-                value: _selectedViolationType,
+                initialValue: selectedViolationType,
                 decoration: InputDecoration(
                   filled: true,
                   fillColor: const Color(0xFFF5F5F5),
@@ -680,7 +682,7 @@ class _ViganFreeMapScreenState extends State<ViganFreeMapScreen> {
                         )
                         .toList(),
                 onChanged: (value) {
-                  if (value != null) _selectedViolationType = value;
+                  if (value != null) selectedViolationType = value;
                 },
               ),
               const SizedBox(height: 16),
@@ -694,7 +696,7 @@ class _ViganFreeMapScreenState extends State<ViganFreeMapScreen> {
               ),
               const SizedBox(height: 6),
               TextField(
-                controller: _commentsController,
+                controller: commentsController,
                 maxLines: 2,
                 decoration: InputDecoration(
                   hintText: "Enter extra information...",
@@ -711,7 +713,7 @@ class _ViganFreeMapScreenState extends State<ViganFreeMapScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: () async {
-                    if (_bodyNumberController.text.trim().isEmpty) {
+                    if (bodyNumberController.text.trim().isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text("Please provide the body number."),
@@ -723,11 +725,11 @@ class _ViganFreeMapScreenState extends State<ViganFreeMapScreen> {
                     try {
                       final supabase = Supabase.instance.client;
                       await supabase.from('tricycle_reports').insert({
-                        'report_type': _selectedViolationType,
+                        'report_type': selectedViolationType,
                         'route_distance_km': _distanceInKm,
                         'official_fare': _calculatedFare,
                         'description':
-                            'Tricycle Body Number: ${_bodyNumberController.text.trim()}. Notes: ${_commentsController.text.trim()}',
+                            'Tricycle Body Number: ${bodyNumberController.text.trim()}. Notes: ${commentsController.text.trim()}',
                         'status': 'Pending',
                       });
                     } catch (err) {}

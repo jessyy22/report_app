@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../theme/app_theme.dart';
+
 class FareZone {
   final String zoneCategory;
   final List<String> villages;
@@ -27,10 +29,11 @@ class FareZone {
   });
 
   factory FareZone.fromJson(Map<String, dynamic> json, List<String> villages) {
-    double asDouble(dynamic v) => (v as num).toDouble();
+    // Null-safe: tolerate missing/null fare columns.
+    double asDouble(dynamic v) => (v as num?)?.toDouble() ?? 0.0;
 
     return FareZone(
-      zoneCategory: json['zone_category'] as String,
+      zoneCategory: json['zone_category']?.toString() ?? '',
       villages: villages,
       singleDayFare: asDouble(json['single_day_fare']),
       singleNightFare: asDouble(json['single_night_fare']),
@@ -60,90 +63,112 @@ class ViganFareMatrix {
           builder: (context, scrollController) {
             return Container(
               decoration: const BoxDecoration(
-                color: Colors.white,
+                color: AppColors.card,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
               ),
-              child: SingleChildScrollView(
-                controller: scrollController,
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: [
-                    _header(),
-                    const SizedBox(height: 15),
-                    FutureBuilder<List<FareZone>>(
-                      future: _fetchFareZones(),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 60),
-                            child: Center(child: CircularProgressIndicator()),
-                          );
-                        }
-
-                        if (snapshot.hasError) {
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 60),
-                            child: Center(
-                              child: Text(
-                                "Couldn't load fare matrix.\n${snapshot.error}",
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(color: Colors.red),
-                              ),
-                            ),
-                          );
-                        }
-
-                        final zones = snapshot.data ?? [];
-
-                        final poblacionZone = zones
-                            .where((z) => z.isPoblacion)
-                            .cast<FareZone?>()
-                            .firstWhere((_) => true, orElse: () => null);
-
-                        final outsideZone = zones
-                            .where((z) => !z.isPoblacion)
-                            .cast<FareZone?>()
-                            .firstWhere((_) => true, orElse: () => null);
-
-                        return Column(
+              child: Column(
+                children: [
+                  _dragHandle(context),
+                  Expanded(
+                    child: RefreshIndicator(
+                      onRefresh: () async => _fetchFareZones(),
+                      child: SingleChildScrollView(
+                        controller: scrollController,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+                        child: Column(
                           children: [
-                            if (zones.isNotEmpty) ...[
-                              _timeHeader(
-                                "6:00 AM TO 6:00 PM",
-                                Colors.green.shade700,
-                              ),
-                              ...zones.map(
-                                (z) => _zoneSection(z, isNight: false),
-                              ),
-                              const SizedBox(height: 10),
-                              _timeHeader(
-                                "6:00 PM TO 6:00 AM",
-                                Colors.blue.shade700,
-                              ),
-                              if (poblacionZone != null)
-                                _nightSummarySection(
-                                  poblacionZone,
-                                  "FOR TRIPS WITHIN THE POBLACION AREA.",
-                                ),
-                              if (outsideZone != null)
-                                _nightSummarySection(
-                                  outsideZone,
-                                  "FOR TRIPS GOING OUTSIDE THE POBLACION AREA.",
-                                ),
-                            ],
+                            _header(),
+                            const SizedBox(height: 16),
+                            FutureBuilder<List<FareZone>>(
+                              future: _fetchFareZones(),
+                              builder: (context, snapshot) {
+                                if (snapshot.connectionState ==
+                                    ConnectionState.waiting) {
+                                  return const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 60),
+                                    child: Center(
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                  );
+                                }
 
-                            const SizedBox(height: 20),
-                            _provisionalNotice(),
-                            const SizedBox(height: 15),
-                            _penaltyNotice(),
-                            const SizedBox(height: 40),
+                                if (snapshot.hasError) {
+                                  return _errorState(snapshot.error);
+                                }
+
+                                final zones = snapshot.data ?? [];
+                                if (zones.isEmpty) {
+                                  return const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 60),
+                                    child: Center(
+                                      child: Text(
+                                        'No fare data available yet.',
+                                        style: TextStyle(
+                                          color: AppColors.muted,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }
+
+                                final poblacionZone = zones
+                                    .where((z) => z.isPoblacion)
+                                    .cast<FareZone?>()
+                                    .firstWhere(
+                                      (_) => true,
+                                      orElse: () => null,
+                                    );
+                                final outsideZone = zones
+                                    .where((z) => !z.isPoblacion)
+                                    .cast<FareZone?>()
+                                    .firstWhere(
+                                      (_) => true,
+                                      orElse: () => null,
+                                    );
+
+                                return Column(
+                                  children: [
+                                    _timeHeader(
+                                      '6:00 AM – 6:00 PM',
+                                      AppColors.green,
+                                      Icons.wb_sunny_outlined,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    ...zones.map(_zoneSection),
+                                    const SizedBox(height: 16),
+                                    _timeHeader(
+                                      '6:00 PM – 6:00 AM',
+                                      Colors.indigo.shade700,
+                                      Icons.nightlight_outlined,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    if (poblacionZone != null)
+                                      _nightSummarySection(
+                                        poblacionZone,
+                                        'For trips within the Poblacion area.',
+                                      ),
+                                    if (outsideZone != null)
+                                      _nightSummarySection(
+                                        outsideZone,
+                                        'For trips going outside the '
+                                        'Poblacion area.',
+                                      ),
+                                    const SizedBox(height: 24),
+                                    _provisionalNotice(),
+                                    const SizedBox(height: 16),
+                                    _penaltyNotice(),
+                                  ],
+                                );
+                              },
+                            ),
                           ],
-                        );
-                      },
+                        ),
+                      ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             );
           },
@@ -152,7 +177,9 @@ class ViganFareMatrix {
     );
   }
 
-  /// Fetches fare_matrix rows and attaches each zone's village names.
+  // ============================================================
+  // DATA
+  // ============================================================
   static Future<List<FareZone>> _fetchFareZones() async {
     final client = Supabase.instance.client;
 
@@ -176,101 +203,144 @@ class ViganFareMatrix {
     }).toList();
   }
 
-  static Widget _header() {
+  // ============================================================
+  // HEADER
+  // ============================================================
+  static Widget _dragHandle(BuildContext context) {
     return Column(
       children: [
-        Text(
-          "CITY OF VIGAN",
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-            color: Colors.green.shade800,
-            letterSpacing: 0.5,
+        const SizedBox(height: 10),
+        Container(
+          width: 40,
+          height: 4,
+          decoration: BoxDecoration(
+            color: AppColors.border,
+            borderRadius: BorderRadius.circular(2),
           ),
         ),
-        const SizedBox(height: 4),
-        const Text(
-          "SCHEDULE OF FARES",
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const Text(
-          "TRICYCLE FOR HIRE",
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          "as per Ordinance No. 1 Series of 2011 as amended by Ordinance No. 10 Series of 2022",
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 11,
-            fontStyle: FontStyle.italic,
-            color: Colors.grey.shade600,
+        Align(
+          alignment: Alignment.centerRight,
+          child: IconButton(
+            tooltip: 'Close',
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.of(context).pop(),
           ),
         ),
-        const SizedBox(height: 12),
-        Divider(color: Colors.green.shade700, thickness: 1.2),
       ],
     );
   }
 
-  static Widget _timeHeader(String text, Color color) {
+  static Widget _header() {
+    return Column(
+      children: [
+        Text(
+          'CITY OF VIGAN',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            color: AppColors.greenDark,
+            letterSpacing: 1.0,
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Schedule of Fares',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w800,
+            color: AppColors.text,
+          ),
+        ),
+        const Text(
+          'Tricycle for Hire',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'As per Ordinance No. 1, Series of 2011 '
+          'as amended by Ordinance No. 10, Series of 2022',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 11,
+            fontStyle: FontStyle.italic,
+            color: AppColors.muted,
+            height: 1.4,
+          ),
+        ),
+        const SizedBox(height: 14),
+        Container(height: 1, color: AppColors.border),
+      ],
+    );
+  }
+
+  static Widget _timeHeader(String text, Color color, IconData icon) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      margin: const EdgeInsets.only(bottom: 15),
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(6),
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 0.5,
-        ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 8),
+          Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  /// One card per zone, shown under the day (6AM-6PM) header.
-  static Widget _zoneSection(FareZone zone, {required bool isNight}) {
-    final singleFare = isNight ? zone.singleNightFare : zone.singleDayFare;
-    final singleDiscounted = isNight
-        ? zone.singleDiscountedNightFare
-        : zone.singleDiscountedDayFare;
-    final sharedFare = isNight ? zone.sharedNightFare : zone.sharedDayFare;
-    final sharedDiscounted = isNight
-        ? zone.sharedDiscountedNightFare
-        : zone.sharedDiscountedDayFare;
-
+  // ============================================================
+  // ZONE SECTIONS
+  // ============================================================
+  static Widget _zoneSection(FareZone zone) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
+      padding: const EdgeInsets.only(bottom: 20),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            _zoneSentence(zone, isNight: isNight),
+            _zoneSentence(zone),
             textAlign: TextAlign.center,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
-              color: Colors.indigo.shade900,
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+              color: AppColors.text,
+              height: 1.4,
             ),
           ),
-          const SizedBox(height: 8),
-          _fare("Single Occupant", _peso(singleFare)),
-          _fare(
-            "Student, Senior Citizen and PWD Single Occupant (W/ID)",
-            _peso(singleDiscounted),
-          ),
-          _fare("Two or More Occupants", "${_peso(sharedFare)} each"),
-          _fare(
-            "Two or More Students, Senior Citizens & PWD's (W/ID)",
-            "${_peso(sharedDiscounted)} each",
+          const SizedBox(height: 10),
+          _fareTable(
+            rows: [
+              _FareRow('Single Occupant', zone.singleDayFare),
+              _FareRow(
+                'Student, Senior Citizen, PWD – Single (w/ ID)',
+                zone.singleDiscountedDayFare,
+              ),
+              _FareRow('Two or More Occupants', zone.sharedDayFare, each: true),
+              _FareRow(
+                'Two or More Students, Seniors, PWD (w/ ID)',
+                zone.sharedDiscountedDayFare,
+                each: true,
+              ),
+            ],
           ),
         ],
       ),
@@ -279,98 +349,236 @@ class ViganFareMatrix {
 
   static Widget _nightSummarySection(FareZone zone, String label) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
+      padding: const EdgeInsets.only(bottom: 20),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             label,
             textAlign: TextAlign.center,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
-              color: Colors.indigo.shade900,
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+              color: AppColors.text,
+              height: 1.4,
             ),
           ),
-          const SizedBox(height: 8),
-          _fare("Single Occupant", _peso(zone.singleNightFare)),
-          _fare(
-            "Student, Senior Citizen and PWD Single Occupant (W/ID)",
-            _peso(zone.singleDiscountedNightFare),
-          ),
-          _fare("Two or More Occupants", "${_peso(zone.sharedNightFare)} each"),
-          _fare(
-            "Two or More Students, Senior Citizens & PWD's (W/ID)",
-            "${_peso(zone.sharedDiscountedNightFare)} each",
+          const SizedBox(height: 10),
+          _fareTable(
+            rows: [
+              _FareRow('Single Occupant', zone.singleNightFare),
+              _FareRow(
+                'Student, Senior Citizen, PWD – Single (w/ ID)',
+                zone.singleDiscountedNightFare,
+              ),
+              _FareRow(
+                'Two or More Occupants',
+                zone.sharedNightFare,
+                each: true,
+              ),
+              _FareRow(
+                'Two or More Students, Seniors, PWD (w/ ID)',
+                zone.sharedDiscountedNightFare,
+                each: true,
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  static String _zoneSentence(FareZone zone, {required bool isNight}) {
+  static String _zoneSentence(FareZone zone) {
     if (zone.isPoblacion) {
       final barangays = zone.villages.isNotEmpty
           ? zone.villages.join(', ')
           : 'Barangay I to Barangay IX';
-      return isNight
-          ? "FOR TRIPS WITHIN THE POBLACION AREA."
-          : "WITHIN THE POBLACION AREA ($barangays) AND VICE VERSA.";
+      return 'Within the Poblacion area ($barangays) and vice versa.';
     }
 
-    final villageList = zone.villages.join(', ');
-    return isNight
-        ? "FOR TRIPS GOING OUTSIDE THE POBLACION AREA."
-        : "FROM THE POBLACION AREA TO $villageList AND VICE VERSA.";
+    final villageList = zone.villages.isNotEmpty
+        ? zone.villages.join(', ')
+        : '(unspecified villages)';
+    return 'From the Poblacion area to $villageList and vice versa.';
   }
 
-  static Widget _fare(String label, String price) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  // ============================================================
+  // FARE TABLE
+  // ============================================================
+  static Widget _fareTable({required List<_FareRow> rows}) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(12),
+        color: AppColors.card,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
         children: [
-          Expanded(child: Text(label)),
-          const SizedBox(width: 8),
-          Text(price, style: const TextStyle(fontWeight: FontWeight.bold)),
+          for (int i = 0; i < rows.length; i++) ...[
+            if (i > 0) Container(height: 1, color: AppColors.borderLight),
+            _fareRow(rows[i]),
+          ],
         ],
       ),
     );
   }
 
+  static Widget _fareRow(_FareRow row) {
+    return Container(
+      color: row.each ? AppColors.background : AppColors.card,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              row.label,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.textSecondary,
+                height: 1.35,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            row.each ? '${_peso(row.amount)} each' : _peso(row.amount),
+            style: const TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+              color: AppColors.text,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // NOTICES
+  // ============================================================
   static Widget _provisionalNotice() {
-    return Text(
-      "A Provisional Schedule of Fares shall be imposed, wherein there shall be a Five Pesos (₱5.00) increase to the current schedule of fares for every ₱1.00 fuel price hike. Provided however that, in case there will be a rollback of the fuel price by ₱1.00, the schedule of fares shall also be reverted back by Five Pesos (₱5.00).",
-      textAlign: TextAlign.center,
-      style: TextStyle(
-        fontSize: 11,
-        fontStyle: FontStyle.italic,
-        color: Colors.grey.shade700,
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.amber.shade50,
+        border: Border.all(color: Colors.amber.shade200),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.info_outline, size: 16, color: Colors.amber.shade800),
+              const SizedBox(width: 6),
+              Text(
+                'PROVISIONAL FARE SCHEDULE',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 11,
+                  color: Colors.amber.shade900,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'A ₱5.00 increase applies for every ₱1.00 fuel price hike. '
+            'Conversely, if fuel price rolls back by ₱1.00, fares revert '
+            'by ₱5.00.',
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+              height: 1.4,
+            ),
+          ),
+        ],
       ),
     );
   }
 
   static Widget _penaltyNotice() {
     return Container(
-      padding: const EdgeInsets.all(15),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.red.shade50,
-        border: Border.all(color: Colors.red),
-        borderRadius: BorderRadius.circular(10),
+        color: AppColors.dangerSoft,
+        border: Border.all(color: AppColors.danger.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(12),
       ),
-      child: RichText(
-        textAlign: TextAlign.center,
-        text: TextSpan(
-          style: TextStyle(color: Colors.grey.shade900, fontSize: 12),
-          children: const [
-            TextSpan(
-              text: "PENALTY FOR VIOLATION: ",
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                size: 16,
+                color: AppColors.danger,
+              ),
+              const SizedBox(width: 6),
+              const Text(
+                'PENALTY FOR VIOLATION',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 11,
+                  color: AppColors.danger,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'A fine of ₱2,000.00 or one day community service, '
+            'as determined by the General Services Office (GSO). '
+            'Report violations at 0917-103-2784.',
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+              height: 1.4,
             ),
-            TextSpan(
-              text:
-                  "A fine of Two Thousand Pesos (₱2,000.00) or one day community service shall be determined by the General Services Office (GSO). Report violations at tel #: 0917-103-2784. The unauthorized tampering or removal of this fare matrix shall be considered vandalism punishable under Ordinance No. 12 Section 54, D, Series of 2006.",
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Unauthorized tampering or removal of this fare matrix '
+            'is considered vandalism punishable under Ordinance No. 12, '
+            'Section 54-D, Series of 2006.',
+            style: TextStyle(
+              fontSize: 11,
+              fontStyle: FontStyle.italic,
+              color: AppColors.muted,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _errorState(Object? error) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 60),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: AppColors.danger, size: 36),
+            const SizedBox(height: 8),
+            const Text(
+              "Couldn't load fare matrix.",
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: AppColors.text,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              error.toString(),
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.danger, fontSize: 12),
             ),
           ],
         ),
@@ -378,5 +586,16 @@ class ViganFareMatrix {
     );
   }
 
-  static String _peso(double amount) => "₱${amount.toStringAsFixed(2)}";
+  static String _peso(double amount) {
+    final isWhole = amount == amount.roundToDouble();
+    return '₱${amount.toStringAsFixed(isWhole ? 0 : 2)}';
+  }
+}
+
+class _FareRow {
+  final String label;
+  final double amount;
+  final bool each;
+
+  _FareRow(this.label, this.amount, {this.each = false});
 }
