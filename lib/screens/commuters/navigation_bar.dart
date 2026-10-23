@@ -30,7 +30,7 @@ class _NavigationState extends State<Navigation> {
   int currentPageIndex = 0;
   String _displayName = 'there';
   bool _loadingName = true;
-  String? _photoUrl; // ← NEW
+  String? _photoUrl;
 
   @override
   void initState() {
@@ -96,11 +96,11 @@ class _NavigationState extends State<Navigation> {
     }
   }
 
-  // ── SOS navigation — unified with driver dashboard ─────────
+  // ── SOS navigation — call-only screen, no role needed ──────
   void _openSOSScreen() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const SOSScreen(userRole: 'commuter')),
+      MaterialPageRoute(builder: (_) => const SOSScreen()),
     );
   }
 
@@ -202,7 +202,6 @@ class _NavigationState extends State<Navigation> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                // ── Profile photo avatar ─────────────────────
                 _profileAvatar(),
               ],
             ),
@@ -238,7 +237,7 @@ class _NavigationState extends State<Navigation> {
                   () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => const FareCalculatorScreen(),
+                      builder: (_) => const ViganFreeMapScreen(),
                     ),
                   ),
                 ),
@@ -315,7 +314,6 @@ class _NavigationState extends State<Navigation> {
 
   // ── Profile avatar with graceful fallback ─────────────────
   Widget _profileAvatar() {
-    // No photo → show icon in circle
     if (_photoUrl == null || _photoUrl!.isEmpty) {
       return Container(
         width: 52,
@@ -332,7 +330,6 @@ class _NavigationState extends State<Navigation> {
       );
     }
 
-    // Photo → circular avatar
     return Container(
       width: 52,
       height: 52,
@@ -377,7 +374,7 @@ class _NavigationState extends State<Navigation> {
     );
   }
 
-  // ── SOS card — matches the driver dashboard ────────────────
+  // ── Emergency hotlines card ────────────────────────────────
   Widget _sosButton() {
     return Container(
       width: double.infinity,
@@ -412,7 +409,7 @@ class _NavigationState extends State<Navigation> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'SOS Emergency Alert',
+                      'Emergency Hotlines',
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
@@ -421,8 +418,7 @@ class _NavigationState extends State<Navigation> {
                     ),
                     SizedBox(height: 4),
                     Text(
-                      'Open the emergency screen to alert RTODA '
-                      'administrators.',
+                      'Call PNP, fire, medical, or RTODA directly.',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppColors.textSecondary,

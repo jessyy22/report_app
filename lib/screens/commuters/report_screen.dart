@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -289,7 +290,7 @@ class _ReportFormState extends State<ReportForm> {
 
   Future<String?> _getBarangay(double latitude, double longitude) async {
     try {
-      final googleResult = await _googleGeocoding.getBarangay(
+      final googleResult = await _googleGeocoding.getFullAddress(
         latitude: latitude,
         longitude: longitude,
       );
@@ -1210,7 +1211,7 @@ class _IncidentLocationPickerState extends State<IncidentLocationPicker> {
         children: [
           TileLayer(
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            userAgentPackageName: 'com.example.app',
+            userAgentPackageName: 'com.example.report_app',
           ),
           if (_picked != null)
             MarkerLayer(

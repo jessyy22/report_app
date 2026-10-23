@@ -485,7 +485,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
     );
   }
 
-  // ── SOS card — navigates to SOSScreen ─────────────────────
+  // ── Emergency hotlines card ───────────────────────────────
   Widget _sosButton() {
     return Container(
       width: double.infinity,
@@ -520,7 +520,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'SOS Emergency Alert',
+                      'Emergency Hotlines',
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
@@ -529,8 +529,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                     ),
                     SizedBox(height: 4),
                     Text(
-                      'Open the emergency screen to alert RTODA '
-                      'administrators.',
+                      'Call PNP, fire, medical, or RTODA directly.',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppColors.textSecondary,
@@ -552,15 +551,11 @@ class _DriverDashboardState extends State<DriverDashboard> {
     );
   }
 
+  // ── SOS navigation — call-only, no role or body needed ───
   void _openSOSScreen() {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => SOSScreen(
-          userRole: 'driver',
-          bodyNumber: _bodyNumber == 'N/A' ? null : _bodyNumber,
-        ),
-      ),
+      MaterialPageRoute(builder: (_) => const SOSScreen()),
     );
   }
 

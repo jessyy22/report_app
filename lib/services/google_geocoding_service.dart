@@ -1,93 +1,61 @@
-import 'package:flutter/foundation.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 class GoogleGeocodingService {
-  // ── No API key here. The Edge Function holds it. ─────────
+  static const String apiKey = "AIzaSyAovUxi_7Ak591LhTmShKqcnEOf2PRy1uI";
 
-  final SupabaseClient _supabase = Supabase.instance.client;
-
-  // ── In-memory cache (rounded to ~11m precision) ─────────
-  static final Map<String, ({String? address, String? barangay})> _cache = {};
-
-  // ============================================================
-  // PUBLIC API (unchanged signatures — drop-in replacement)
-  // ============================================================
-
-  /// Returns the full formatted address for the given coordinates.
   Future<String?> getFullAddress({
     required double latitude,
     required double longitude,
   }) async {
-    final result = await reverseGeocode(
-      latitude: latitude,
-      longitude: longitude,
-    );
-    return result.address;
-  }
-
-  /// Returns the barangay name for the given coordinates.
-  Future<String?> getBarangay({
-    required double latitude,
-    required double longitude,
-  }) async {
-    final result = await reverseGeocode(
-      latitude: latitude,
-      longitude: longitude,
-    );
-    return result.barangay;
-  }
-
-  /// Single call to the Edge Function — returns both address + barangay.
-  Future<({String? address, String? barangay})> reverseGeocode({
-    required double latitude,
-    required double longitude,
-  }) async {
-    final cacheKey =
-        '${latitude.toStringAsFixed(4)},${longitude.toStringAsFixed(4)}';
-
-    // Cache hit — no network call
-    if (_cache.containsKey(cacheKey)) {
-      debugPrint('Geocoding: Cache hit for $cacheKey');
-      return _cache[cacheKey]!;
-    }
-
     try {
-      final response = await _supabase.functions.invoke(
-        'geocode',
-        body: {'lat': latitude, 'lng': longitude},
-      );
+      final url =
+          "https://maps.googleapis.com/maps/api/geocode/json"
+          "?latlng=$latitude,$longitude"
+          "&key=$apiKey";
 
-      if (response.status != 200) {
-        debugPrint(
-          'Geocoding Edge Function error: '
-          'status=${response.status} data=${response.data}',
-        );
-        return (address: null, barangay: null);
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode != 200) {
+        print(response.body);
+        return null;
       }
 
-      final data = response.data as Map<String, dynamic>;
-      final output = (
-        address: data['address']?.toString(),
-        barangay: data['barangay']?.toString(),
-      );
+      final data = jsonDecode(response.body);
 
-      _cache[cacheKey] = output;
+      if (data["status"] != "OK") {
+        print(data);
+        return null;
+      }
 
-      debugPrint(
-        'Geocoding: $cacheKey → '
-        'address=${output.address != null ? 'OK' : 'null'}, '
-        'barangay=${output.barangay}',
-      );
+      final results = data["results"] as List;
 
-      return output;
+      for (final result in results) {
+        final components = result["address_components"] as List;
+
+        for (final component in components) {
+          final types = List<String>.from(component["types"]);
+
+          // Administrative Level 4 usually contains the Barangay
+          if (types.contains("administrative_area_level_4")) {
+            return component["long_name"];
+          }
+
+          // Sometimes Google labels it as a sublocality
+          if (types.contains("sublocality")) {
+            return component["long_name"];
+          }
+
+          if (types.contains("sublocality_level_1")) {
+            return component["long_name"];
+          }
+        }
+      }
+
+      return null;
     } catch (e) {
-      debugPrint('Geocoding Edge Function call failed: $e');
-      return (address: null, barangay: null);
+      print("Google Geocoding Error: $e");
+      return null;
     }
-  }
-
-  /// Clear the in-memory cache (useful for testing).
-  static void clearCache() {
-    _cache.clear();
   }
 }

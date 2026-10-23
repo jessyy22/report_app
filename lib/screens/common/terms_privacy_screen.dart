@@ -16,17 +16,11 @@ class _TermsPrivacyScreenState extends State<TermsPrivacyScreen> {
 
     final prefs = await SharedPreferences.getInstance();
 
-    await prefs.setBool(
-      'rtoda_terms_agreed',
-      true,
-    );
+    await prefs.setBool('rtoda_terms_agreed', true);
 
     if (!mounted) return;
 
-    Navigator.pushReplacementNamed(
-      context,
-      '/login',
-    );
+    Navigator.pushReplacementNamed(context, '/login');
   }
 
   @override
@@ -39,9 +33,7 @@ class _TermsPrivacyScreenState extends State<TermsPrivacyScreen> {
         elevation: 0,
         title: const Text(
           'RTODA Agreement',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
       body: SafeArea(
@@ -58,8 +50,7 @@ class _TermsPrivacyScreenState extends State<TermsPrivacyScreen> {
                         width: 80,
                         height: 80,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF119400)
-                              .withOpacity(0.12),
+                          color: const Color(0xFF119400).withOpacity(0.12),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(
@@ -212,22 +203,18 @@ class _TermsPrivacyScreenState extends State<TermsPrivacyScreen> {
                     Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF119400)
-                            .withOpacity(0.07),
+                        color: const Color(0xFF119400).withOpacity(0.07),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
-                          color: const Color(0xFF119400)
-                              .withOpacity(0.20),
+                          color: const Color(0xFF119400).withOpacity(0.20),
                         ),
                       ),
                       child: Row(
-                        crossAxisAlignment:
-                            CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Checkbox(
                             value: _agreed,
-                            activeColor:
-                                const Color(0xFF119400),
+                            activeColor: const Color(0xFF119400),
                             onChanged: (value) {
                               setState(() {
                                 _agreed = value ?? false;
@@ -236,8 +223,7 @@ class _TermsPrivacyScreenState extends State<TermsPrivacyScreen> {
                           ),
                           const Expanded(
                             child: Padding(
-                              padding:
-                                  EdgeInsets.only(top: 12),
+                              padding: EdgeInsets.only(top: 12),
                               child: Text(
                                 'I have read and understood the RTODA Terms of Use and Privacy Policy. I agree to use the application responsibly and provide truthful information.',
                                 style: TextStyle(
@@ -259,12 +245,7 @@ class _TermsPrivacyScreenState extends State<TermsPrivacyScreen> {
             ),
 
             Container(
-              padding: const EdgeInsets.fromLTRB(
-                20,
-                12,
-                20,
-                20,
-              ),
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
               decoration: const BoxDecoration(
                 color: Colors.white,
                 boxShadow: [
@@ -281,24 +262,17 @@ class _TermsPrivacyScreenState extends State<TermsPrivacyScreen> {
                 child: ElevatedButton(
                   onPressed: _agreed ? _continue : null,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        const Color(0xFF119400),
-                    disabledBackgroundColor:
-                        Colors.grey.shade300,
+                    backgroundColor: const Color(0xFF119400),
+                    disabledBackgroundColor: Colors.grey.shade300,
                     foregroundColor: Colors.white,
-                    disabledForegroundColor:
-                        Colors.grey.shade600,
+                    disabledForegroundColor: Colors.grey.shade600,
                     shape: RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                   child: const Text(
                     'AGREE & CONTINUE',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                   ),
                 ),
               ),
@@ -320,21 +294,14 @@ class _TermsPrivacyScreenState extends State<TermsPrivacyScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: Colors.black12,
-        ),
+        border: Border.all(color: Colors.black12),
       ),
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(
-                icon,
-                color: const Color(0xFF119400),
-                size: 24,
-              ),
+              Icon(icon, color: const Color(0xFF119400), size: 24),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(

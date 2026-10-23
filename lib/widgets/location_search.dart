@@ -135,7 +135,7 @@ class _LocationSearchState extends State<LocationSearch> {
         ),
       ).timeout(const Duration(seconds: 20));
 
-      final barangay = await _reverseService.getBarangay(
+      final barangay = await _reverseService.getFullAddress(
         latitude: position.latitude,
         longitude: position.longitude,
       );

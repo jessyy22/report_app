@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/app_theme.dart';
 import 'account_status_screen.dart';
 import 'email_verification_screen.dart';
+import 'common/terms_privacy_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -33,12 +34,14 @@ class _SplashScreenState extends State<SplashScreen> {
     final prefs = await SharedPreferences.getInstance();
     final agreedToTerms = prefs.getBool('rtoda_terms_agreed') ?? false;
 
+    // ── Terms gate — first launch or user hasn't agreed ─────
     if (!agreedToTerms) {
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/terms');
       return;
     }
 
+    // ── Session check ───────────────────────────────────────
     final session = client.auth.currentSession;
 
     if (session == null) {
