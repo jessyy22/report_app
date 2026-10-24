@@ -1,60 +1,55 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class GoogleGeocodingService {
-  static const String apiKey = "AIzaSyAovUxi_7Ak591LhTmShKqcnEOf2PRy1uI";
+  static String get _endpoint =>
+      'https://haryaqpwigdqthiulgwu.supabase.co/functions/v1/places';
+
+  static Map<String, String> get _headers => {
+    'Content-Type': 'application/json',
+    'apikey': 'sb_publishable_05uY19PVrsc6414rAEH83Q_QqCby_rs',
+  };
 
   Future<String?> getFullAddress({
     required double latitude,
     required double longitude,
   }) async {
+    final d = await _reverse(latitude, longitude);
+    if (d == null) return null;
+    final addr = d['address'] as String?;
+    return (addr == null || addr.isEmpty) ? null : addr;
+  }
+
+  /// Barangay name only — for fare matrix lookup (e.g. "Poblacion").
+  Future<String?> getBarangay({
+    required double latitude,
+    required double longitude,
+  }) async {
+    final d = await _reverse(latitude, longitude);
+    if (d == null) return null;
+    final brgy = d['barangay'] as String?;
+    return (brgy == null || brgy.isEmpty) ? null : brgy;
+  }
+
+  Future<Map<String, dynamic>?> _reverse(double lat, double lng) async {
     try {
-      final url =
-          "https://maps.googleapis.com/maps/api/geocode/json"
-          "?latlng=$latitude,$longitude"
-          "&key=$apiKey";
+      final res = await http
+          .post(
+            Uri.parse(_endpoint),
+            headers: _headers,
+            body: jsonEncode({'action': 'reverse', 'lat': lat, 'lng': lng}),
+          )
+          .timeout(const Duration(seconds: 10));
 
-      final response = await http.get(Uri.parse(url));
-
-      if (response.statusCode != 200) {
-        print(response.body);
+      if (res.statusCode != 200) {
+        print('Geocoding error ${res.statusCode}: ${res.body}');
         return null;
       }
-
-      final data = jsonDecode(response.body);
-
-      if (data["status"] != "OK") {
-        print(data);
-        return null;
-      }
-
-      final results = data["results"] as List;
-
-      for (final result in results) {
-        final components = result["address_components"] as List;
-
-        for (final component in components) {
-          final types = List<String>.from(component["types"]);
-
-          // Administrative Level 4 usually contains the Barangay
-          if (types.contains("administrative_area_level_4")) {
-            return component["long_name"];
-          }
-
-          // Sometimes Google labels it as a sublocality
-          if (types.contains("sublocality")) {
-            return component["long_name"];
-          }
-
-          if (types.contains("sublocality_level_1")) {
-            return component["long_name"];
-          }
-        }
-      }
-
-      return null;
+      return jsonDecode(res.body) as Map<String, dynamic>;
     } catch (e) {
-      print("Google Geocoding Error: $e");
+      print('Google Geocoding Error: $e');
       return null;
     }
   }

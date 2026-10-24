@@ -290,7 +290,7 @@ class _ReportFormState extends State<ReportForm> {
 
   Future<String?> _getBarangay(double latitude, double longitude) async {
     try {
-      final googleResult = await _googleGeocoding.getFullAddress(
+      final googleResult = await _googleGeocoding.getBarangay(
         latitude: latitude,
         longitude: longitude,
       );
@@ -302,6 +302,7 @@ class _ReportFormState extends State<ReportForm> {
       debugPrint('Google Geocoding failed: $e');
     }
 
+    // …existing OSM fallback unchanged…
     try {
       final osmResult = await _reverseGeocoding.getBarangay(
         latitude: latitude,

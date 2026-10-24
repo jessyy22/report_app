@@ -328,19 +328,12 @@ class ViganFareMatrix {
           ),
           const SizedBox(height: 10),
           _fareTable(
-            rows: [
-              _FareRow('Single Occupant', zone.singleDayFare),
-              _FareRow(
-                'Student, Senior Citizen, PWD – Single (w/ ID)',
-                zone.singleDiscountedDayFare,
-              ),
-              _FareRow('Two or More Occupants', zone.sharedDayFare, each: true),
-              _FareRow(
-                'Two or More Students, Seniors, PWD (w/ ID)',
-                zone.sharedDiscountedDayFare,
-                each: true,
-              ),
-            ],
+            rows: _buildRows(
+              singleRegular: zone.singleDayFare,
+              singleDiscounted: zone.singleDiscountedDayFare,
+              sharedRegular: zone.sharedDayFare,
+              sharedDiscounted: zone.sharedDiscountedDayFare,
+            ),
           ),
         ],
       ),
@@ -365,27 +358,58 @@ class ViganFareMatrix {
           ),
           const SizedBox(height: 10),
           _fareTable(
-            rows: [
-              _FareRow('Single Occupant', zone.singleNightFare),
-              _FareRow(
-                'Student, Senior Citizen, PWD – Single (w/ ID)',
-                zone.singleDiscountedNightFare,
-              ),
-              _FareRow(
-                'Two or More Occupants',
-                zone.sharedNightFare,
-                each: true,
-              ),
-              _FareRow(
-                'Two or More Students, Seniors, PWD (w/ ID)',
-                zone.sharedDiscountedNightFare,
-                each: true,
-              ),
-            ],
+            rows: _buildRows(
+              singleRegular: zone.singleNightFare,
+              singleDiscounted: zone.singleDiscountedNightFare,
+              sharedRegular: zone.sharedNightFare,
+              sharedDiscounted: zone.sharedDiscountedNightFare,
+            ),
           ),
         ],
       ),
     );
+  }
+
+  static List<_FareRow> _buildRows({
+    required double singleRegular,
+    required double singleDiscounted,
+    required double sharedRegular,
+    required double sharedDiscounted,
+  }) {
+    final rows = <_FareRow>[];
+
+    // Always add regular fares if they are valid
+    if (singleRegular > 0) {
+      rows.add(_FareRow('Single Occupant', singleRegular));
+    }
+
+    // Only add discount if > 0
+    if (singleDiscounted > 0) {
+      rows.add(
+        _FareRow(
+          'Student, Senior Citizen, PWD – Single (w/ ID)',
+          singleDiscounted,
+        ),
+      );
+    }
+
+    // Always add regular shared if valid
+    if (sharedRegular > 0) {
+      rows.add(_FareRow('Two or More Occupants', sharedRegular, each: true));
+    }
+
+    // Only add discount if > 0
+    if (sharedDiscounted > 0) {
+      rows.add(
+        _FareRow(
+          'Two or More Students, Seniors, PWD (w/ ID)',
+          sharedDiscounted,
+          each: true,
+        ),
+      );
+    }
+
+    return rows;
   }
 
   static String _zoneSentence(FareZone zone) {

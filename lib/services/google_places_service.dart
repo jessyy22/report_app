@@ -1,88 +1,112 @@
+import 'dart:async';
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../models/place.dart';
 
 class GooglePlacesService {
-  // Replace with your actual API Key
-  static const String apiKey = "AIzaSyAovUxi_7Ak591LhTmShKqcnEOf2PRy1uI";
+  /// Supabase Edge Function endpoint.
+  static String get _endpoint =>
+      'https://haryaqpwigdqthiulgwu.supabase.co/functions/v1/places';
 
+  /// Send the anon/publishable key in the `apikey` header.
+  /// Do NOT put it in `Authorization: Bearer ...` — that requires a JWT.
+  static Map<String, String> get _headers => {
+    'Content-Type': 'application/json',
+    'apikey': 'sb_publishable_05uY19PVrsc6414rAEH83Q_QqCby_rs',
+  };
+
+  // ============================================================
+  // SEARCH (autocomplete + details)
+  // ============================================================
   Future<List<Place>> searchPlaces(String query) async {
-    if (query.trim().isEmpty) return [];
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return [];
 
-    final autocompleteUrl =
-        "https://places.googleapis.com/v1/places:autocomplete";
+    try {
+      final response = await http
+          .post(
+            Uri.parse(_endpoint),
+            headers: _headers,
+            body: jsonEncode({'action': 'autocomplete', 'query': trimmed}),
+          )
+          .timeout(const Duration(seconds: 10));
 
-    final response = await http.post(
-      Uri.parse(autocompleteUrl),
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask":
-            "suggestions.placePrediction.placeId,suggestions.placePrediction.text",
-      },
-      body: jsonEncode({
-        "input": query,
-        "includedRegionCodes": ["PH"],
-        "regionCode": "PH",
-        "languageCode": "en",
-        "locationBias": {
-          "circle": {
-            "center": {"latitude": 17.5747, "longitude": 120.3869},
-            "radius": 15000.0,
-          },
-        },
-      }),
-    );
+      debugPrint('Places: status=${response.statusCode} for "$trimmed"');
 
-    if (response.statusCode != 200) {
-      print(response.body);
-      return [];
-    }
-
-    final data = jsonDecode(response.body);
-
-    if (data["suggestions"] == null) {
-      return [];
-    }
-
-    List<Place> places = [];
-
-    for (final suggestion in data["suggestions"]) {
-      final placeId = suggestion["placePrediction"]["placeId"];
-
-      final details = await _getPlaceDetails(placeId);
-
-      if (details != null) {
-        places.add(details);
+      if (response.statusCode != 200) {
+        debugPrint('Places error body: ${response.body}');
+        return [];
       }
-    }
 
-    return places;
+      final data = jsonDecode(response.body);
+      final results = data['results'];
+
+      if (results is! List || results.isEmpty) {
+        debugPrint('Places: no suggestions in response');
+        return [];
+      }
+
+      // Fetch details in parallel (faster than sequential)
+      final futures = <Future<Place?>>[];
+      for (final r in results) {
+        if (r is! Map) continue;
+        final placeId = r['placeId']?.toString();
+        if (placeId == null || placeId.isEmpty) continue;
+        futures.add(_getPlaceDetails(placeId));
+      }
+
+      final resolved = await Future.wait(futures);
+      final places = resolved.whereType<Place>().toList();
+
+      debugPrint('Places: ${places.length} resolved for "$trimmed"');
+      return places;
+    } on TimeoutException {
+      debugPrint('Places: timeout for "$trimmed"');
+      return [];
+    } catch (e) {
+      debugPrint('Places: exception — $e');
+      return [];
+    }
   }
 
+  // ============================================================
+  // DETAILS
+  // ============================================================
   Future<Place?> _getPlaceDetails(String placeId) async {
-    final url = "https://places.googleapis.com/v1/places/$placeId";
+    try {
+      final response = await http
+          .post(
+            Uri.parse(_endpoint),
+            headers: _headers,
+            body: jsonEncode({'action': 'details', 'placeId': placeId}),
+          )
+          .timeout(const Duration(seconds: 10));
 
-    final response = await http.get(
-      Uri.parse(url),
-      headers: {
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": "displayName,formattedAddress,location",
-      },
-    );
+      if (response.statusCode != 200) {
+        debugPrint('Place details error: ${response.statusCode} for $placeId');
+        return null;
+      }
 
-    if (response.statusCode != 200) {
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+      final lat = (json['latitude'] as num?)?.toDouble();
+      final lng = (json['longitude'] as num?)?.toDouble();
+      if (lat == null || lng == null) return null;
+
+      return Place(
+        name: json['name']?.toString() ?? '',
+        fullAddress: json['fullAddress']?.toString() ?? '',
+        barangay: json['barangay']?.toString() ?? '',
+        latitude: lat,
+        longitude: lng,
+      );
+    } catch (e) {
+      debugPrint('Place details exception: $e');
       return null;
     }
-
-    final json = jsonDecode(response.body);
-
-    return Place(
-      name: json["displayName"]["text"] ?? "",
-      fullAddress: json["formattedAddress"] ?? "",
-      barangay: "", // We'll fill this later using reverse geocoding
-      latitude: (json["location"]["latitude"] as num).toDouble(),
-      longitude: (json["location"]["longitude"] as num).toDouble(),
-    );
   }
 }

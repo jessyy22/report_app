@@ -1,14 +1,10 @@
 import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class FareService {
   final SupabaseClient supabase = Supabase.instance.client;
 
-  // ============================================================
-  // PUBLIC API
-  // ============================================================
   Future<Map<String, dynamic>> calculateFare({
     required String pickupBarangay,
     required String destinationBarangay,
@@ -25,20 +21,13 @@ class FareService {
         isSingleOccupant: isSingleOccupant,
       ).timeout(const Duration(seconds: 15));
     } on TimeoutException {
-      return {
-        "covered": false,
-        "message": "Fare lookup took too long. Please try again.",
-      };
-    } catch (e, stackTrace) {
-      debugPrint('FARE CALCULATION ERROR: $e');
-      debugPrint('STACK TRACE: $stackTrace');
-      return {"covered": false, "message": _friendlyError(e)};
+      return {"covered": false, "message": "Fare lookup took too long."};
+    } catch (e) {
+      debugPrint('FARE ERROR: $e');
+      return {"covered": false, "message": "Fare calculation error."};
     }
   }
 
-  // ============================================================
-  // INTERNAL
-  // ============================================================
   Future<Map<String, dynamic>> _doCalculateFare({
     required String pickupBarangay,
     required String destinationBarangay,
@@ -49,168 +38,110 @@ class FareService {
     final cleanPickup = pickupBarangay.trim();
     final cleanDestination = destinationBarangay.trim();
 
-    // ── 1. Look up pickup village ──────────────────────────
+    // 1. Get Pickup Village
     final pickup = await supabase
         .from('villages')
-        .select('village_name, zone_category')
+        .select('zone_category')
         .ilike('village_name', cleanPickup)
-        .limit(1)
         .maybeSingle();
 
-    if (pickup == null) {
-      return {
-        "covered": false,
-        "message": "Pickup is not covered by the CPSTMD Fare Matrix.",
-      };
-    }
-
-    // ── 2. Look up destination village ─────────────────────
+    // 2. Get Destination Village
     final destination = await supabase
         .from('villages')
-        .select('village_name, zone_category')
+        .select('zone_category')
         .ilike('village_name', cleanDestination)
-        .limit(1)
         .maybeSingle();
 
-    if (destination == null) {
+    if (pickup == null || destination == null) {
       return {
         "covered": false,
-        "message": "Destination is not covered by the CPSTMD Fare Matrix.",
+        "message": "One of the locations is not in the database.",
       };
     }
 
-    // ── 3. Validate zones ──────────────────────────────────
-    final pickupZone = pickup['zone_category']?.toString();
-    final destinationZone = destination['zone_category']?.toString();
+    final pickupZone = pickup['zone_category'];
+    final destZone = destination['zone_category'];
 
-    if (pickupZone == null || destinationZone == null) {
+    // 3. Rule: At least one must be Zone_Poblacion
+    if (pickupZone != 'Zone_Poblacion' && destZone != 'Zone_Poblacion') {
       return {
         "covered": false,
-        "message": "Village data is incomplete. Please try another location.",
+        "message": "Route not covered (neither is Poblacion).",
       };
     }
 
-    // Both locations outside Poblacion → not covered
-    if (pickupZone != 'Zone_Poblacion' && destinationZone != 'Zone_Poblacion') {
-      return {
-        "covered": false,
-        "message":
-            "This route is not covered by the official CPSTMD Fare Matrix.",
-      };
+    // 4. Find the target zone (the one that IS NOT Poblacion)
+    String targetZone;
+    if (pickupZone == 'Zone_Poblacion' && destZone == 'Zone_Poblacion') {
+      targetZone = 'Zone_Poblacion'; // Poblacion to Poblacion
+    } else if (pickupZone == 'Zone_Poblacion') {
+      targetZone = destZone; // Leaving Poblacion
+    } else {
+      targetZone = pickupZone; // Going to Poblacion
     }
 
-    // ── 4. Determine fare zone ─────────────────────────────
-    // At this point, at least one of the two is Zone_Poblacion.
-    final fareZone = pickupZone == 'Zone_Poblacion'
-        ? destinationZone
-        : pickupZone;
+    debugPrint('Looking up fare for Zone: $targetZone');
 
-    // ── 5. Look up fare ────────────────────────────────────
-    final fare = await supabase
+    // 5. Fetch the row. We ONLY filter by zone_category.
+    final fareRow = await supabase
         .from('fare_matrix')
         .select()
-        .eq('zone_category', fareZone)
-        .limit(1)
+        .eq('zone_category', targetZone)
         .maybeSingle();
 
-    if (fare == null) {
+    if (fareRow == null) {
       return {
         "covered": false,
-        "message": "Official fare not found for this route.",
+        "message": "No fare row exists for $targetZone in the matrix.",
       };
     }
 
-    // ── 6. Calculate fare ──────────────────────────────────
-    final officialFare = _selectFare(
-      fare: fare,
-      isSingleOccupant: isSingleOccupant,
-      nightFare: nightFare,
-      discounted: discounted,
-    );
+    // 6. Get the price
+    final fare = _selectFare(fareRow, isSingleOccupant, nightFare, discounted);
 
-    if (officialFare <= 0) {
+    if (fare <= 0) {
       return {
         "covered": false,
-        "message": "Fare data for this route is incomplete.",
+        "message": "Fare row found, but the price is 0 or null.",
       };
     }
 
-    // ── 7. Return result ───────────────────────────────────
     return {
       "covered": true,
-      "pickup": cleanPickup,
+      "fare": fare,
       "pickupZone": pickupZone,
-      "destination": cleanDestination,
-      "destinationZone": destinationZone,
-      "fareZone": fareZone,
-      "fare": officialFare,
+      "destinationZone": destZone,
     };
   }
 
-  // ============================================================
-  // FARE SELECTION
-  // ============================================================
-  double _selectFare({
-    required Map<String, dynamic> fare,
-    required bool isSingleOccupant,
-    required bool nightFare,
-    required bool discounted,
-  }) {
-    String key;
-    String fallbackKey;
+  double _selectFare(
+    Map<String, dynamic> fare,
+    bool isSingle,
+    bool isNight,
+    bool isDiscounted,
+  ) {
+    String key = isSingle
+        ? (isNight ? 'single_night_fare' : 'single_day_fare')
+        : (isNight ? 'shared_night_fare' : 'shared_day_fare');
 
-    if (isSingleOccupant) {
-      if (nightFare) {
-        key = 'single_discounted_fare_night';
-        fallbackKey = 'single_night_fare';
-      } else {
-        key = 'single_discounted_fare_day';
-        fallbackKey = 'single_day_fare';
-      }
-    } else {
-      if (nightFare) {
-        key = 'shared_discounted_fare_night';
-        fallbackKey = 'shared_night_fare';
-      } else {
-        key = 'shared_discounted_fare_day';
-        fallbackKey = 'shared_day_fare';
-      }
+    String discountKey = isSingle
+        ? (isNight
+              ? 'single_discounted_fare_night'
+              : 'single_discounted_fare_day')
+        : (isNight
+              ? 'shared_discounted_fare_night'
+              : 'shared_discounted_fare_day');
+
+    if (isDiscounted) {
+      double d = _asDouble(fare[discountKey]);
+      if (d > 0) return d;
     }
-
-    if (!discounted) {
-      return _asDouble(fare[fallbackKey]);
-    }
-
-    // Discounted path — fall back to regular if discount is null.
-    final discountedValue = _asDouble(fare[key]);
-    if (discountedValue > 0) {
-      return discountedValue;
-    }
-
-    debugPrint('Discounted fare missing ($key) — falling back to $fallbackKey');
-    return _asDouble(fare[fallbackKey]);
+    return _asDouble(fare[key]);
   }
 
-  // ============================================================
-  // HELPERS
-  // ============================================================
   double _asDouble(dynamic v) {
     if (v == null) return 0;
     if (v is num) return v.toDouble();
     return double.tryParse(v.toString()) ?? 0;
-  }
-
-  String _friendlyError(Object e) {
-    if (e is TimeoutException) {
-      return 'The fare service is taking too long. Please try again.';
-    }
-    if (e is PostgrestException) {
-      if (e.code == '42P01' || e.code == '42703') {
-        return 'Fare data is currently unavailable. '
-            'Please try again later.';
-      }
-      return 'Could not retrieve fare information. Please try again.';
-    }
-    return 'Something went wrong while calculating the fare.';
   }
 }

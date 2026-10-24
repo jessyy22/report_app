@@ -237,7 +237,7 @@ class _NavigationState extends State<Navigation> {
                   () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => const ViganFreeMapScreen(),
+                      builder: (_) => const FareCalculatorScreen(),
                     ),
                   ),
                 ),

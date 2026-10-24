@@ -24,7 +24,7 @@ dependencies:
   flutter_launcher_icons: "^0.14.4"
   http: ^1.2.1
   shared_preferences: ^2.2.3
-  supabase_flutter: ^2.0.0
+  supabase_flutter: ^2.5.0
   turf: ^0.0.12
   firebase_core: ^4.14.0
   firebase_messaging: ^16.6.0
