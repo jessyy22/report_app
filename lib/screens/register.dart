@@ -630,6 +630,10 @@ class _SignupPageState extends State<SignupPage> {
                       number: true,
                       action: TextInputAction.next,
                       autofillHints: const [AutofillHints.telephoneNumber],
+                      formatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(11),
+                      ],
                     ),
 
                     if (_driver) ...[
@@ -898,6 +902,7 @@ class _SignupPageState extends State<SignupPage> {
       textInputAction: action,
       autofillHints: autofillHints,
       inputFormatters: formatters,
+      maxLength: label == 'Phone Number' ? 11 : null,
       validator:
           validator ??
           (value) {
@@ -915,9 +920,8 @@ class _SignupPageState extends State<SignupPage> {
             }
 
             if (label == 'Phone Number') {
-              final digits = v.replaceAll(RegExp(r'[^\d+]'), '');
-              if (!RegExp(r'^(09\d{9}|\+?639\d{9})$').hasMatch(digits)) {
-                return 'Enter a valid PH number (e.g., 0917 123 4567)';
+              if (!RegExp(r'^09\d{9}$').hasMatch(v)) {
+                return 'Enter a valid 11-digit number starting with 09';
               }
             }
 

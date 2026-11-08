@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -175,6 +174,63 @@ class _ReportFormState extends State<ReportForm> {
     final now = DateTime.now();
     _date.text = DateFormat('yyyy-MM-dd').format(now);
     _time.text = DateFormat('hh:mm a').format(now);
+  }
+
+  DateTime _getIncidentDateTime() {
+    if (_reportType == ReportType.reportNow) {
+      return DateTime.now();
+    }
+
+    return DateFormat(
+      'yyyy-MM-dd hh:mm a',
+    ).parseStrict('${_date.text.trim()} ${_time.text.trim()}');
+  }
+
+  String _formatTimeWithOffset(DateTime dateTime) {
+    final offset = dateTime.timeZoneOffset;
+    final sign = offset.isNegative ? '-' : '+';
+    final hours = offset.inHours.abs().toString().padLeft(2, '0');
+    final minutes = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+
+    return '${DateFormat('HH:mm:ss').format(dateTime)}$sign$hours:$minutes';
+  }
+
+  Future<void> _pickIncidentDate() async {
+    final current = DateFormat('yyyy-MM-dd').parseStrict(_date.text);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: current,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+    );
+
+    if (picked != null && mounted) {
+      setState(() {
+        _date.text = DateFormat('yyyy-MM-dd').format(picked);
+      });
+    }
+  }
+
+  Future<void> _pickIncidentTime() async {
+    final current = DateFormat('hh:mm a').parseStrict(_time.text);
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(current),
+    );
+
+    if (picked != null && mounted) {
+      final now = DateTime.now();
+      final selected = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        picked.hour,
+        picked.minute,
+      );
+      setState(() {
+        _time.text = DateFormat('hh:mm a').format(selected);
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -630,47 +686,51 @@ class _ReportFormState extends State<ReportForm> {
             '${DateTime.now().millisecondsSinceEpoch}.$extension';
 
         await db.storage
-            .from('report_evidence')
+            .from('evidence')
             .upload(
               path,
               _image!,
               fileOptions: const FileOptions(upsert: false),
             );
 
-        imageUrl = db.storage.from('report_evidence').getPublicUrl(path);
+        imageUrl = db.storage.from('evidence').getPublicUrl(path);
       }
 
-      final barangay = await _getBarangay(_lat!, _lng!);
+      final incidentDateTime = _getIncidentDateTime();
+      final incidentDate = DateFormat('yyyy-MM-dd').format(incidentDateTime);
+      final incidentTime = _formatTimeWithOffset(incidentDateTime);
+      final selectedViolation = _selectedItem == 'Others'
+          ? 'Others: ${_otherReason.text.trim()}'
+          : _selectedItem!;
 
       final payload = <String, dynamic>{
-        'commuter_id': user.id,
-        'tricycle_id': _tricycleId,
-        'report_type': _selectedItem == 'Others'
-            ? 'Others: ${_otherReason.text.trim()}'
-            : _selectedItem,
+        'user_id': user.id,
+        'tricycle_id': int.tryParse(_tricycleId),
+        'body_number': 'VGN-${_body.text.trim()}',
+        'violation': selectedViolation,
+        'report_type': selectedViolation,
         'description': _driver.text.trim().isEmpty ? null : _driver.text.trim(),
-        'location_text': _location.text.trim(),
-        'barangay': barangay,
+        'location': _location.text.trim(),
         'latitude': _lat,
         'longitude': _lng,
-        'location_accuracy': _locationAccuracy,
         'evidence_url': imageUrl,
-        'reported_at': _reportType == ReportType.lateReport
-            ? '${_date.text} ${_time.text}'
-            : DateTime.now().toUtc().toIso8601String(),
-        'late_reason': _reportType == ReportType.lateReport
+        'incidentdate': incidentDate,
+        'incidenttime': incidentTime,
+        'complainantname': _name.text.trim(),
+        'contact': _contact.text.trim(),
+        'late_report_reason': _reportType == ReportType.lateReport
             ? _lateReason.text.trim()
             : null,
-        'status': 'pending',
+        'status': 'Pending',
       };
 
       final inserted = await db
           .from('reports')
           .insert(payload)
-          .select('id')
+          .select('report_id')
           .maybeSingle();
 
-      final reportId = inserted?['id']?.toString();
+      final reportId = inserted?['report_id']?.toString();
 
       // ── Notifications (best-effort, non-blocking) ──────────────────────────
       unawaited(
@@ -787,6 +847,9 @@ class _ReportFormState extends State<ReportForm> {
                             child: TextFormField(
                               controller: _date,
                               readOnly: true,
+                              onTap: _reportType == ReportType.lateReport
+                                  ? _pickIncidentDate
+                                  : null,
                               decoration: const InputDecoration(
                                 labelText: 'Date',
                                 prefixIcon: Icon(Icons.calendar_today_outlined),
@@ -800,6 +863,9 @@ class _ReportFormState extends State<ReportForm> {
                             child: TextFormField(
                               controller: _time,
                               readOnly: true,
+                              onTap: _reportType == ReportType.lateReport
+                                  ? _pickIncidentTime
+                                  : null,
                               decoration: const InputDecoration(
                                 labelText: 'Time',
                                 prefixIcon: Icon(Icons.access_time),
